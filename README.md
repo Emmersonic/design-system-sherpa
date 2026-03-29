@@ -245,36 +245,45 @@ CSS output example:
 
 ## Installation
 
-Skills are `.skill` files — zip archives containing a `SKILL.md` and supporting files.
-
-**Claude Code**
+**1. Clone the repo**
 
 ```bash
-# Create your skills directory
-mkdir -p ~/.claude/skills
-
-# Unzip each skill
-unzip token-foundation.skill    -d ~/.claude/skills/token-foundation
-unzip token-figma-scaffold.skill -d ~/.claude/skills/token-figma-scaffold
-unzip token-generate.skill      -d ~/.claude/skills/token-generate
-unzip token-push.skill          -d ~/.claude/skills/token-push
-unzip token-audit.skill         -d ~/.claude/skills/token-audit
-unzip token-migrate.skill       -d ~/.claude/skills/token-migrate
-unzip token-apply.skill         -d ~/.claude/skills/token-apply
+git clone https://github.com/your-org/ds-token-skills.git ~/ds-token-skills
+cd ~/ds-token-skills
 ```
 
-Then add the skills path to your project's `CLAUDE.md`:
+**2. Run the install script**
+
+```bash
+# Install skills into ~/.claude/skills/ and copy scripts to your project
+./install.sh --scripts /path/to/your/design-system-project
 ```
-Skills path: ~/.claude/skills
+
+This symlinks each skill directory into `~/.claude/skills/` and copies the shared Python scripts into your project's `scripts/` folder.
+
+Skills only (no scripts):
+```bash
+./install.sh
 ```
 
-**Shared / team setup**
+Then copy scripts manually when you're ready:
+```bash
+cp -r scripts/ /path/to/your/project/scripts/
+```
 
-Unzip into any shared directory your team has read access to and reference that path in your project config. Skills are plain folders — no registry or package manager required.
+**3. Reload Claude Code** to pick up the new skills.
 
-**Python scripts**
+---
 
-Scripts are called by Claude from each skill's `scripts/` folder. No global install needed beyond Python 3.8+, and no third-party dependencies.
+**How it works**
+
+Skills are plain directories containing a `SKILL.md`. They live in `~/.claude/skills/` and are loaded globally by Claude Code — no per-project config needed.
+
+The Python scripts (`scripts/`) run from your project's working directory, so they need to be in your project alongside your token proposal files. They require Python 3.8+ and no third-party dependencies.
+
+**Team / shared setup**
+
+Clone to any shared path your team has read access to, then run `install.sh` on each machine. The symlinks point back to the cloned repo, so a `git pull` updates everyone's skills without re-running the installer.
 
 ---
 

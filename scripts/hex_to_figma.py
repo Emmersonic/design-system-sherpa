@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-hex_to_figma.py — Convert token proposal values to Figma API format.
+hex_to_figma.py
+---------------
+Converts hex color values in a token proposal JSON to Figma's {r,g,b,a} float format
+and writes the result back to the proposal file (or a new file).
 
-Reads a token-proposal.json (or a partial one), converts all primitive COLOR
-values from hex strings to Figma's {r,g,b,a} format (0-1 range), and writes
-the result back with `figma_value` fields populated.
-
-Also usable as a library: import `hex_to_figma` and call it directly.
+Figma color values are 0–1 floats, not 0–255 integers.
+This script populates the `figma_value` field on every COLOR primitive in the proposal,
+so token-push can use them directly without doing math.
 
 Usage:
-    python hex_to_figma.py token-proposal.json
-    python hex_to_figma.py token-proposal.json --out token-proposal-converted.json
-    python hex_to_figma.py --color "#3B82F6"          # single color, prints result
+    python hex_to_figma.py proposal.json
+    python hex_to_figma.py proposal.json --out proposal-converted.json
+    python hex_to_figma.py --hex "#3B82F6"          # single conversion, no file
+    python hex_to_figma.py --hex "#3B82F680"        # with alpha (80 = 50% opacity)
 """
 
 import argparse
@@ -27,111 +29,177 @@ from pathlib import Path
 
 def hex_to_figma(hex_str: str) -> dict:
     """
-    Convert a CSS hex color string to Figma's {r, g, b, a} format (0-1 range).
+    Convert a CSS hex color to a Figma RGBA dict with 0–1 float values.
 
-    Accepts: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
-    Returns: {"r": float, "g": float, "b": float, "a": float}
-    Raises:  ValueError on unrecognised format.
+    Accepts:
+      #RGB       → expands to #RRGGBB
+      #RGBA      → expands to #RRGGBBAA
+      #RRGGBB    → standard 6-digit
+      #RRGGBBAA  → with alpha channel
+
+    Returns:
+      {"r": float, "g": float, "b": float, "a": float}
+
+    Raises:
+      ValueError if the input is not a recognised hex format.
     """
-    hex_str = hex_str.strip().lstrip("#")
+    hex_str = hex_str.strip()
+    if not hex_str.startswith("#"):
+        raise ValueError(f"Expected hex color starting with '#', got: {hex_str!r}")
+
+    h = hex_str[1:]  # strip the '#'
 
     # Expand shorthand
-    if len(hex_str) in (3, 4):
-        hex_str = "".join(c * 2 for c in hex_str)
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    elif len(h) == 4:
+        h = "".join(c * 2 for c in h)
 
-    if len(hex_str) == 6:
-        hex_str += "ff"
+    if len(h) == 6:
+        h += "ff"  # fully opaque
+    elif len(h) != 8:
+        raise ValueError(f"Cannot parse hex color: {hex_str!r}")
 
-    if len(hex_str) != 8 or not re.fullmatch(r"[0-9a-fA-F]{8}", hex_str):
-        raise ValueError(f"Unrecognised hex color format: #{hex_str!r}")
+    if not re.fullmatch(r"[0-9a-fA-F]{8}", h):
+        raise ValueError(f"Invalid hex characters in: {hex_str!r}")
 
-    r = int(hex_str[0:2], 16) / 255
-    g = int(hex_str[2:4], 16) / 255
-    b = int(hex_str[4:6], 16) / 255
-    a = int(hex_str[6:8], 16) / 255
+    r = int(h[0:2], 16) / 255
+    g = int(h[2:4], 16) / 255
+    b = int(h[4:6], 16) / 255
+    a = int(h[6:8], 16) / 255
 
-    # Round to 3 decimal places — matches Figma's own export precision
-    return {"r": round(r, 3), "g": round(g, 3), "b": round(b, 3), "a": round(a, 3)}
+    return {
+        "r": round(r, 4),
+        "g": round(g, 4),
+        "b": round(b, 4),
+        "a": round(a, 4),
+    }
 
 
 def figma_to_hex(figma_color: dict) -> str:
     """
-    Convert a Figma {r,g,b,a} color back to a CSS hex string.
-    Useful for round-trip validation.
+    Reverse conversion: Figma {r,g,b,a} → hex string.
+    Useful for verification and audit diffing.
     """
     r = round(figma_color["r"] * 255)
     g = round(figma_color["g"] * 255)
     b = round(figma_color["b"] * 255)
-    a = round(figma_color.get("a", 1.0) * 255)
-    if a == 255:
-        return f"#{r:02X}{g:02X}{b:02X}"
-    return f"#{r:02X}{g:02X}{b:02X}{a:02X}"
+    a = figma_color.get("a", 1.0)
+
+    hex_rgb = f"#{r:02X}{g:02X}{b:02X}"
+    if a < 1.0:
+        hex_rgb += f"{round(a * 255):02X}"
+    return hex_rgb
 
 
-def process_proposal(proposal: dict) -> tuple:
+# ---------------------------------------------------------------------------
+# Proposal processing
+# ---------------------------------------------------------------------------
+
+def process_proposal(proposal: dict) -> tuple[dict, list[str], list[str]]:
     """
-    Walk a token-proposal.json dict and populate `figma_value` on all
-    COLOR primitives. Leaves non-COLOR and already-converted tokens untouched.
-    Returns (updated_proposal, list_of_warnings).
-    """
-    warnings = []
-    for token in proposal.get("primitives", []):
-        token_type = token.get("type", "")
-        value = token.get("value")
+    Walk a token proposal and populate `figma_value` on every COLOR primitive.
 
-        if token_type != "COLOR":
-            if "figma_value" not in token:
-                token["figma_value"] = value
+    Returns:
+        (updated_proposal, converted_names, error_messages)
+    """
+    converted = []
+    errors = []
+
+    primitives = proposal.get("collections", {}).get("primitives", [])
+    for token in primitives:
+        if token.get("type") != "COLOR":
             continue
 
-        if "figma_value" in token:
-            continue
-
-        if not isinstance(value, str):
-            warnings.append(f"  SKIP  {token.get('name', '?')} -- COLOR token has non-string value: {value!r}")
+        raw = token.get("value")
+        if not isinstance(raw, str) or not raw.startswith("#"):
+            errors.append(f"  SKIP  {token.get('name', '?')!r}: value {raw!r} is not a hex color")
             continue
 
         try:
-            token["figma_value"] = hex_to_figma(value)
-        except ValueError as exc:
-            warnings.append(f"  WARN  {token.get('name', '?')} -- {exc}")
+            token["figma_value"] = hex_to_figma(raw)
+            converted.append(token["name"])
+        except ValueError as e:
+            errors.append(f"  ERROR {token.get('name', '?')!r}: {e}")
 
-    return proposal, warnings
+    return proposal, converted, errors
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert token-proposal.json hex colors to Figma {r,g,b,a} format.")
-    parser.add_argument("input", nargs="?", help="Path to token-proposal.json (reads stdin if omitted)")
-    parser.add_argument("--out", help="Output path (overwrites input file if omitted)")
-    parser.add_argument("--color", help="Convert a single hex color and print the result")
+    parser = argparse.ArgumentParser(
+        description="Convert hex colors in a token proposal to Figma float format."
+    )
+    parser.add_argument(
+        "file",
+        nargs="?",
+        help="Path to token proposal JSON (reads stdin if omitted)",
+    )
+    parser.add_argument(
+        "--out",
+        help="Output path (defaults to overwriting the input file)",
+    )
+    parser.add_argument(
+        "--hex",
+        help="Convert a single hex value and print the result — no file needed",
+    )
+    parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="With --hex: interpret input as r,g,b,a floats and convert back to hex",
+    )
     args = parser.parse_args()
 
-    if args.color:
-        try:
-            print(json.dumps(hex_to_figma(args.color), indent=2))
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
+    # --- Single value mode ---
+    if args.hex:
+        if args.reverse:
+            parts = [float(x) for x in args.hex.split(",")]
+            result = figma_to_hex({"r": parts[0], "g": parts[1], "b": parts[2], "a": parts[3] if len(parts) > 3 else 1.0})
+            print(result)
+        else:
+            try:
+                result = hex_to_figma(args.hex)
+                print(json.dumps(result, indent=2))
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(1)
         return
 
-    if args.input:
-        input_path = Path(args.input)
+    # --- File mode ---
+    if args.file:
+        input_path = Path(args.file)
+        if not input_path.exists():
+            print(f"Error: file not found: {args.file}", file=sys.stderr)
+            sys.exit(1)
         proposal = json.loads(input_path.read_text())
     else:
-        proposal = json.loads(sys.stdin.read())
-        input_path = None
+        proposal = json.load(sys.stdin)
 
-    proposal, warnings = process_proposal(proposal)
-    for w in warnings:
-        print(w, file=sys.stderr)
+    proposal, converted, errors = process_proposal(proposal)
 
-    output = json.dumps(proposal, indent=2)
-    out_path = Path(args.out) if args.out else input_path
-    if out_path:
-        out_path.write_text(output)
-        print(f"Written to {out_path}  ({len(proposal.get('primitives', []))} primitives)")
+    # Report
+    print(f"\nhex_to_figma: processed {len(converted)} COLOR primitives")
+    if converted:
+        for name in converted:
+            print(f"  ✓  {name}")
+    if errors:
+        print(f"\n{len(errors)} issue(s):")
+        for msg in errors:
+            print(msg)
+
+    # Write output
+    output_path = Path(args.out) if args.out else (Path(args.file) if args.file else None)
+    if output_path:
+        output_path.write_text(json.dumps(proposal, indent=2))
+        print(f"\nWrote: {output_path}")
     else:
-        print(output)
+        print(json.dumps(proposal, indent=2))
+
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
