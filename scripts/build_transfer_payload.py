@@ -42,6 +42,8 @@ Usage:
     python build_transfer_payload.py source.json target.json --mode overwrite --out payloads/
     python build_transfer_payload.py source.json target.json --mode add --chunk-size 25
     python build_transfer_payload.py source.json target.json --mode merge --summary
+    python build_transfer_payload.py source.json target.json --mode merge --export-manifest manifest.json
+    python build_transfer_payload.py manifest.json target.json --mode merge --from-manifest
 """
 
 import argparse
@@ -50,6 +52,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_CHUNK_SIZE = 50
+DEFAULT_JS_CHUNK_SIZE = 150  # figma_execute can handle larger payloads than batch API calls
 
 
 # ---------------------------------------------------------------------------
@@ -129,16 +132,21 @@ def analyze(source_data: dict, target_data: dict, mode: str) -> dict:
 
     variable_plans = []
 
+    # Compute the set of source variable names (needed for self-ref detection later)
+    all_source_names = set(src_vars.keys())
+
     # Variables in source
     for name, src_var in src_vars.items():
         tgt_var = tgt_vars.get(name)
 
         # Collect dangling aliases for this variable
+        # An alias is dangling only if its target is neither in the target file
+        # NOR in the source variables being transferred (self-refs resolve after creation)
         dangling = []
         for mode_name, val in src_var.get("valuesByMode", {}).items():
             if is_alias(val):
                 target_name = val.get("targetName")
-                if target_name and target_name not in all_target_names:
+                if target_name and target_name not in all_target_names and target_name not in all_source_names:
                     dangling.append(target_name)
                     dangling_registry.setdefault(target_name, [])
                     if name not in dangling_registry[target_name]:
@@ -195,6 +203,27 @@ def analyze(source_data: dict, target_data: dict, mode: str) -> dict:
                 "dangling_aliases": [],
             })
 
+    # --- Self-referential alias detection ---
+    # Variables being created whose alias targets are also being created
+    # in the same collection. These need name-based resolution at runtime,
+    # not ID-based resolution from the target inventory.
+    names_being_created = {e["name"] for e in variable_plans if e["action"] == "add"}
+    self_ref_aliases: dict[str, list[str]] = {}  # variable name → list of target names that are self-refs
+
+    for entry in variable_plans:
+        if entry["action"] != "add" or entry["source"] is None:
+            continue
+        for mode_name, val in entry["source"].get("valuesByMode", {}).items():
+            if is_alias(val):
+                target_name = val.get("targetName")
+                if target_name and target_name in names_being_created:
+                    self_ref_aliases.setdefault(entry["name"], [])
+                    if target_name not in self_ref_aliases[entry["name"]]:
+                        self_ref_aliases[entry["name"]].append(target_name)
+                    # Mark the alias value as self-referential so the write phase
+                    # resolves it from the nameToId map built after creation
+                    val["self_ref"] = True
+
     return {
         "source_modes": list(src_modes.items()),
         "target_modes": list(tgt_modes.items()),
@@ -203,6 +232,7 @@ def analyze(source_data: dict, target_data: dict, mode: str) -> dict:
         "extra_modes": extra_modes,
         "variables": variable_plans,
         "dangling_aliases": dangling_registry,
+        "self_ref_aliases": self_ref_aliases,
     }
 
 
@@ -348,6 +378,7 @@ def build_payloads(plan: dict, source_data: dict, target_data: dict,
             "existing_variables_to_update": len(vars_by_action["update_existing"]),
             "variables_to_delete": len(delete_ids),
             "dangling_aliases": {k: v for k, v in plan["dangling_aliases"].items()},
+            "self_ref_aliases": plan.get("self_ref_aliases", {}),
             "extra_modes_in_source": plan["extra_modes"],
             "missing_modes_in_source": plan["missing_modes"],
         },
@@ -355,10 +386,210 @@ def build_payloads(plan: dict, source_data: dict, target_data: dict,
 
 
 # ---------------------------------------------------------------------------
+# Portable manifest (for re-transfers without re-reading source)
+# ---------------------------------------------------------------------------
+
+def export_manifest(source_data: dict) -> list[dict]:
+    """
+    Export a portable, name-based manifest from source data.
+    Contains no file-specific IDs — can be fed directly into the write phase
+    for transfers to any target file.
+    """
+    coll = source_data.get("collection", {})
+    modes = [m["name"] for m in coll.get("modes", [])]
+
+    variables = []
+    for var in source_data.get("variables", []):
+        entry = {
+            "name": var["name"],
+            "type": var["type"],
+            "description": var.get("description", ""),
+            "valuesByMode": {},
+        }
+        for mode_name, val in var.get("valuesByMode", {}).items():
+            if is_alias(val):
+                entry["valuesByMode"][mode_name] = {
+                    "type": "VARIABLE_ALIAS",
+                    "targetName": val["targetName"],
+                }
+            else:
+                entry["valuesByMode"][mode_name] = val
+        variables.append(entry)
+
+    return [{
+        "collection": coll.get("name", ""),
+        "modes": modes,
+        "variables": variables,
+    }]
+
+
+def load_manifest(manifest_path: Path) -> dict:
+    """
+    Load a portable manifest and convert it to the normalized source format
+    expected by analyze() and build_payloads().
+    """
+    manifest = json.loads(manifest_path.read_text())
+    if isinstance(manifest, list):
+        manifest = manifest[0]  # single-collection manifests are wrapped in a list
+
+    modes = [{"id": f"manifest:{i}", "name": name} for i, name in enumerate(manifest.get("modes", []))]
+
+    return {
+        "collection": {
+            "id": "manifest:collection",
+            "name": manifest["collection"],
+            "modes": modes,
+        },
+        "variables": [
+            {
+                "id": f"manifest:{i}",
+                "name": var["name"],
+                "type": var["type"],
+                "description": var.get("description", ""),
+                "valuesByMode": var.get("valuesByMode", {}),
+            }
+            for i, var in enumerate(manifest.get("variables", []))
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# JS payload builder (for figma_execute approach)
+# ---------------------------------------------------------------------------
+
+def build_js_payload_entries(plan: dict, source_data: dict, target_data: dict, chunk_size: int) -> list[dict]:
+    """
+    Build JS-compatible payload chunks for use with transfer_execute.js.
+    Each chunk contains { toCreate: [...], toUpdate: [...] } with aliases expressed
+    as { type: "VARIABLE_ALIAS", targetName: "..." } — resolved at runtime inside
+    figma_execute so newly created variables are immediately available.
+
+    Returns a list of chunks. Raw-value variables come before alias variables so
+    alias targets always exist by the time they're needed.
+    """
+    to_create_raw = []
+    to_create_alias = []
+    to_update = []
+
+    def is_pure_alias_var(var: dict) -> bool:
+        return all(is_alias(v) for v in var.get("valuesByMode", {}).values())
+
+    for entry in plan["variables"]:
+        action = entry["action"]
+
+        if action == "add":
+            src = entry["source"]
+            var_entry = {
+                "name": src["name"],
+                "type": src["type"],
+            }
+            if src.get("description"):
+                var_entry["description"] = src["description"]
+            # Keep alias values as targetName — resolved at runtime
+            var_entry["valuesByMode"] = src.get("valuesByMode", {})
+            if is_pure_alias_var(src):
+                to_create_alias.append(var_entry)
+            else:
+                to_create_raw.append(var_entry)
+
+        elif action == "update":
+            src = entry["source"]
+            to_update.append({
+                "targetId": entry["target_id"],
+                "valuesByMode": src.get("valuesByMode", {}),
+            })
+
+    # Raw first, aliases second — order matters for in-execution alias resolution
+    to_create_ordered = to_create_raw + to_create_alias
+
+    # Chunk: split creates evenly, attach all updates to the last chunk
+    # (updates don't have ordering dependencies)
+    create_chunks = chunk(to_create_ordered, chunk_size)
+    if not create_chunks:
+        create_chunks = [[]]
+
+    result = []
+    for i, creates in enumerate(create_chunks):
+        chunk_payload = {"toCreate": creates, "toUpdate": []}
+        result.append(chunk_payload)
+
+    # Attach updates to the last chunk
+    result[-1]["toUpdate"] = to_update
+
+    return result
+
+
+def write_js_chunks(
+    js_chunks: list[dict],
+    plan: dict,
+    collection_id: str,
+    out_path: Path,
+):
+    """
+    Write figma_execute-ready JS files. Each file has the payload embedded as a
+    const and is ready to paste into figma_execute after setting collectionId
+    and modeMap in the options block.
+    """
+    template_path = Path(__file__).parent.parent / "token-transfer" / "scripts" / "transfer_execute.js"
+
+    # Read the template to extract the header comment and script body
+    if template_path.exists():
+        template = template_path.read_text()
+        # Split at the GENERATED PAYLOAD marker
+        marker = "// ─── GENERATED PAYLOAD"
+        if marker in template:
+            script_header = template[:template.index(marker)]
+            # Everything after the closing payload block + separator line
+            end_marker = "// ─────────────────────────────────────────────────────────────────────────────"
+            payload_end = template.index(end_marker) + len(end_marker)
+            script_body = template[payload_end:]
+        else:
+            script_header = template[:template.rfind("const payload")]
+            script_body = template[template.rfind("// ─── Build name"):]
+    else:
+        # Fallback if template not found
+        script_header = "// transfer_execute.js — paste into figma_execute\n\nconst options = {\n  collectionId: 'REPLACE_WITH_TARGET_COLLECTION_ID',\n  modeMap: {},\n  dryRun: false,\n};\n\n"
+        script_body = "\n// (script body — see token-transfer/scripts/transfer_execute.js)\n"
+
+    s = plan.get("summary", {}) if isinstance(plan, dict) and "summary" in plan else {}
+    dangling = s.get("dangling_aliases", {}) if s else {}
+
+    total = len(js_chunks)
+    for i, js_chunk_payload in enumerate(js_chunks):
+        out_file = out_path if total == 1 else out_path.parent / f"{out_path.stem}_{i+1:02d}{out_path.suffix}"
+
+        creates = js_chunk_payload["toCreate"]
+        updates = js_chunk_payload["toUpdate"]
+
+        payload_js = json.dumps({"toCreate": creates, "toUpdate": updates}, indent=2)
+        # Indent the JSON block to match JS style
+        payload_js = "\n".join("  " + line if line else line for line in payload_js.splitlines())
+
+        chunk_comment = f"// Chunk {i+1}/{total}: {len(creates)} variables to create, {len(updates)} to update\n"
+        if dangling:
+            chunk_comment += f"// WARNING: {len(dangling)} dangling alias target(s) — see transfer_summary.json\n"
+
+        full_script = (
+            script_header
+            + "// ─── GENERATED PAYLOAD ───────────────────────────────────────────────────────\n"
+            + chunk_comment
+            + f"const payload = {payload_js.lstrip()};\n"
+            + "// ─────────────────────────────────────────────────────────────────────────────\n"
+            + script_body
+        )
+
+        out_file.write_text(full_script)
+        print(f"  Wrote {out_file.name}  ({len(creates)} creates, {len(updates)} updates)")
+
+    if total > 1:
+        print(f"  Run in order: chunk 01 first (raw values), then 02+ (aliases + updates)")
+
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
-def print_summary(plan: dict, payloads: dict, mode: str):
+def print_summary(plan: dict, payloads: dict, mode: str, js_chunks: list | None = None):
     variables = plan["variables"]
     counts = {a: sum(1 for v in variables if v["action"] == a)
               for a in ("add", "update", "skip", "match", "delete", "target-only")}
@@ -376,10 +607,13 @@ def print_summary(plan: dict, payloads: dict, mode: str):
     print()
 
     s = payloads["summary"]
-    print(f"  Batch calls (create raw):   {len(payloads['create_batches_raw'])}")
-    print(f"  Batch calls (create alias): {len(payloads['create_batches_alias'])}")
-    print(f"  Batch calls (update):       {len(payloads['update_batches_existing'])}")
-    print(f"  Pending post-create updates:{len(payloads['pending_updates_new'])}  (IDs needed after creation)")
+    if js_chunks is not None:
+        print(f"  figma_execute calls:        {len(js_chunks)}  (vs {len(payloads['create_batches_raw']) + len(payloads['create_batches_alias']) + len(payloads['update_batches_existing'])} batch API calls)")
+    else:
+        print(f"  Batch calls (create raw):   {len(payloads['create_batches_raw'])}")
+        print(f"  Batch calls (create alias): {len(payloads['create_batches_alias'])}")
+        print(f"  Batch calls (update):       {len(payloads['update_batches_existing'])}")
+        print(f"  Pending post-create updates:{len(payloads['pending_updates_new'])}  (IDs needed after creation)")
     print()
 
     if s["extra_modes_in_source"]:
@@ -388,6 +622,10 @@ def print_summary(plan: dict, payloads: dict, mode: str):
     if s["missing_modes_in_source"]:
         print(f"  Modes in target, not in source: {s['missing_modes_in_source']}")
         print(f"    → Transferred variables will have no value for these modes.")
+    self_refs = s.get("self_ref_aliases", {})
+    if self_refs:
+        print(f"  Self-referential aliases:   {len(self_refs)} variable(s) alias other variables in the same collection")
+        print(f"    → Resolved by name after creation (tier 3)")
     if s["dangling_aliases"]:
         print(f"\n  Dangling aliases ({len(s['dangling_aliases'])} target(s) not in destination file):")
         for target_name, used_by in s["dangling_aliases"].items():
@@ -469,8 +707,29 @@ def main():
         default=DEFAULT_CHUNK_SIZE,
         help=f"Max variables per batch call (default: {DEFAULT_CHUNK_SIZE})",
     )
-    parser.add_argument("--out", help="Directory to write payload files (omit to print JSON to stdout)")
+    parser.add_argument("--out", help="Directory to write batch JSON payload files (omit to print JSON to stdout)")
+    parser.add_argument(
+        "--js-out",
+        metavar="FILE",
+        help="Write figma_execute-ready JS file(s) instead of batch JSON. For large transfers, multiple numbered files are written. Example: --js-out transfer_execute.js",
+    )
+    parser.add_argument(
+        "--js-chunk-size",
+        type=int,
+        default=DEFAULT_JS_CHUNK_SIZE,
+        help=f"Max variables per figma_execute chunk (default: {DEFAULT_JS_CHUNK_SIZE})",
+    )
     parser.add_argument("--summary", action="store_true", help="Print summary only, no payload output")
+    parser.add_argument(
+        "--export-manifest",
+        metavar="FILE",
+        help="Export a portable name-based manifest from the source (no IDs). Skips payload generation.",
+    )
+    parser.add_argument(
+        "--from-manifest",
+        action="store_true",
+        help="Treat the source file as a portable manifest instead of a normalized source file.",
+    )
     args = parser.parse_args()
 
     for path_str in (args.source, args.target):
@@ -479,7 +738,23 @@ def main():
             sys.exit(1)
 
     source_data = json.loads(Path(args.source).read_text())
+
+    # Handle manifest export (source only, no target needed)
+    if args.export_manifest:
+        manifest = export_manifest(source_data)
+        Path(args.export_manifest).write_text(json.dumps(manifest, indent=2))
+        coll_name = manifest[0]["collection"]
+        var_count = len(manifest[0]["variables"])
+        print(f"Exported portable manifest: {args.export_manifest}")
+        print(f"  Collection: {coll_name}  ({var_count} variables, {len(manifest[0]['modes'])} modes)")
+        print(f"  No file-specific IDs — safe to use with any target file.")
+        return
+
     target_data = json.loads(Path(args.target).read_text())
+
+    # Load from manifest format if requested
+    if args.from_manifest:
+        source_data = load_manifest(Path(args.source))
 
     # Validate basic structure
     for label, data in (("source", source_data), ("target", target_data)):
@@ -490,13 +765,24 @@ def main():
 
     plan = analyze(source_data, target_data, args.mode)
     payloads = build_payloads(plan, source_data, target_data, args.collection_id, args.chunk_size)
+    js_chunks = build_js_payload_entries(plan, source_data, target_data, args.js_chunk_size) if args.js_out else None
 
-    print_summary(plan, payloads, args.mode)
+    print_summary(plan, payloads, args.mode, js_chunks)
 
     if args.summary:
         return
 
-    if args.out:
+    if args.js_out:
+        js_out_path = Path(args.js_out)
+        js_out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_js_chunks(js_chunks, plan, args.collection_id, js_out_path)
+        # Also write the summary and delete list alongside the JS files
+        out_dir = js_out_path.parent
+        (out_dir / "transfer_summary.json").write_text(json.dumps(payloads["summary"], indent=2))
+        if payloads["delete_ids"]:
+            (out_dir / "delete_ids.json").write_text(json.dumps({"variable_ids": payloads["delete_ids"]}, indent=2))
+        (out_dir / "transfer_plan.json").write_text(json.dumps(plan["variables"], indent=2))
+    elif args.out:
         write_payloads(plan, payloads, args.mode, Path(args.out))
     else:
         output = {

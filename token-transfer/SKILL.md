@@ -22,23 +22,51 @@ Copies a variable collection from a source Figma file into a target Figma file. 
 
 ---
 
+## Steps 1 & 2 — Read source and target (run in parallel)
+
+Steps 1 and 2 are independent reads from different files — issue them at the same time.
+
+---
+
 ## Step 1 — Read the source collection
 
-Use `format: 'filtered'` with the collection name and `verbosity: 'standard'` to fetch only the target collection. For large libraries this is significantly faster than pulling everything.
+Use `figma_execute` to read all source variables in a single call — faster than `figma_get_variables` for large collections as it runs inside Figma's plugin runtime without serialization overhead per variable.
 
-```
-figma_get_variables(
-  fileUrl: <source file>,
-  format: "filtered",
-  collection: "<collection name>",
-  verbosity: "standard"
-)
+```js
+// figma_execute — run in source file context
+const vars = await figma.variables.getLocalVariablesAsync();
+const colls = await figma.variables.getLocalVariableCollectionsAsync();
+
+// Filter to the target collection
+const coll = colls.find(c => c.name === '<collection name>');
+if (!coll) return { error: 'Collection not found', available: colls.map(c => c.name) };
+
+const collVars = vars.filter(v => v.variableCollectionId === coll.id);
+
+return {
+  collection: {
+    id: coll.id,
+    name: coll.name,
+    modes: coll.modes.map(m => ({ id: m.modeId, name: m.name })),
+  },
+  variables: collVars.map(v => ({
+    id: v.id,
+    name: v.name,
+    type: v.resolvedType,
+    description: v.description,
+    valuesByMode: Object.fromEntries(
+      coll.modes.map(m => [m.name, v.valuesByMode[m.modeId]])
+    ),
+  })),
+};
 ```
 
-If the collection name isn't known yet, run a cheap summary first to list available collections (no variable data):
+If the collection name isn't known yet, run a cheap summary first:
 
-```
-figma_get_variables(fileUrl: <source file>, format: "summary")
+```js
+// figma_execute — list available collections
+const colls = await figma.variables.getLocalVariableCollectionsAsync();
+return colls.map(c => ({ name: c.name, modes: c.modes.map(m => m.name), variableCount: c.variableIds.length }));
 ```
 
 For each variable in the response, record:
@@ -98,26 +126,46 @@ Variables: 132 (84 aliases, 48 raw values)
 
 ## Step 2 — Read the target collection
 
-Fetch the matching collection from the target file using the same filtered approach. Also fetch a name → ID inventory of all variables in the target file (needed for alias remapping):
+Use `figma_execute` to fetch both the matching collection and a full name→ID inventory in one call (needed for alias remapping and conflict detection):
 
+```js
+// figma_execute — run in target file context
+const vars = await figma.variables.getLocalVariablesAsync();
+const colls = await figma.variables.getLocalVariableCollectionsAsync();
+
+const coll = colls.find(c => c.name === '<collection name>');
+
+return {
+  // Full name→ID map for alias remapping (all variables in file, not just this collection)
+  allVariables: Object.fromEntries(vars.map(v => [v.name, v.id])),
+
+  // Matching collection data for conflict detection (null if not yet present)
+  collection: coll ? {
+    id: coll.id,
+    name: coll.name,
+    modes: coll.modes.map(m => ({ id: m.modeId, name: m.name })),
+  } : null,
+  variables: coll
+    ? vars
+        .filter(v => v.variableCollectionId === coll.id)
+        .map(v => ({
+          id: v.id,
+          name: v.name,
+          type: v.resolvedType,
+          description: v.description,
+          valuesByMode: Object.fromEntries(
+            coll.modes.map(m => [m.name, v.valuesByMode[m.modeId]])
+          ),
+        }))
+    : [],
+};
 ```
-# Fetch the matching collection for conflict detection
-figma_get_variables(
-  fileUrl: <target file>,
-  format: "filtered",
-  collection: "<collection name>",
-  verbosity: "standard"
-)
 
-# Fetch all variable names + IDs across the whole file for alias remapping
-figma_get_variables(
-  fileUrl: <target file>,
-  format: "filtered",
-  verbosity: "inventory"
-)
-```
+One call returns everything needed: the conflict table and the alias remapping lookup.
 
-`verbosity: "inventory"` returns names and IDs only (~95% smaller than full) — sufficient for building the alias remapping table without loading all values.
+**When to skip the target read:** If the target collection does **not** exist (fresh creation) and the source has no cross-collection aliases, skip the target read entirely — variable IDs will be available locally after creation (see Step 6). For updates to existing variables, the full read is always required.
+
+**Fallback:** If using `figma_get_variables` instead of `figma_execute`, always use `verbosity: 'inventory'` — it returns names and IDs only (~95% smaller than `standard`), sufficient for building the alias remapping table.
 
 Check whether a collection with the same name exists in the target.
 
@@ -191,24 +239,26 @@ Wait for explicit confirmation.
 
 ## Step 4 — Build transfer payloads
 
-Use the helper script to build batch-ready payloads:
+Use `--js-out` to generate `figma_execute`-ready scripts instead of batch JSON payloads. This produces far fewer Figma calls — each JS file does up to 150 creates/updates in one execution rather than one call per 50:
 
 ```bash
 python "${CLAUDE_SKILL_DIR}/../scripts/build_transfer_payload.py" \
   transfer-source.json \
   transfer-target.json \
   --mode merge \
-  --out transfer-payloads/
+  --js-out transfer_execute.js
 ```
 
-The script outputs:
+For a 600-variable collection this produces **4 JS files** instead of **24 batch API calls**.
+
+The script outputs alongside the JS file(s):
 - `transfer_plan.json` — full conflict table with per-variable actions
-- `create_batch_NN.json` — variables to create (chunked at 50)
-- `update_batch_NN.json` — variables to update (values + aliases, chunked at 50)
-- `delete_batch_NN.json` — variables to delete (overwrite mode only; requires separate confirmation)
 - `transfer_summary.json` — counts and dangling alias list
+- `delete_ids.json` — variables to delete (overwrite mode only; requires confirmation)
 
 Review `transfer_plan.json` to spot-check the plan before writing.
+
+Set `collectionId` and `modeMap` in the `options` block of each generated file before running (values come from Step 5).
 
 ---
 
@@ -238,63 +288,46 @@ Compare modes by name:
 
 ## Step 6 — Execute the transfer
 
-Process in dependency order to respect alias chains:
+### 3-tier dependency model
 
-**Pass 1 — Raw values first** (no aliases; safe to create in any order)
+Variables have three tiers with different resolution strategies:
 
-```
-figma_batch_create_variables([
-  { collectionId: <target collection id>, name: "color/blue/500", type: "COLOR" },
-  ...up to 50 per call
-])
-```
+| Tier | Type | Resolution |
+|------|------|------------|
+| 1 | Raw value variables (RGBA, numbers, strings) | No dependencies — create first |
+| 2 | Cross-collection aliases | Depend on variables in *other* collections already in the target — look up by name from target inventory |
+| 3 | Self-referential aliases | Depend on variables *within the same collection* — look up by name from the `nameToId` map built after creation |
 
-Then set their values:
+The key insight: **create all variables first (no values), then set all values**. After creation, every variable has an ID in `nameToId`, so all three tiers resolve in the same value-setting pass — no separate passes per tier.
 
-```
-figma_batch_update_variables([
-  { variableId: <new id>, modeId: <mode id>, value: { r: 0.231, g: 0.510, b: 0.965, a: 1.0 } },
-  ...
-])
-```
+### Execution
 
-**Pass 2 — Alias variables** (must run after all raw-value variables exist)
-
-Create first (no value set yet):
+Run each generated JS file in order via `figma_execute` (in the target file context). File 01 always contains raw-value variables; later files contain alias variables and updates.
 
 ```
-figma_batch_create_variables([
-  { collectionId: <target collection id>, name: "color/surface/brand", type: "COLOR" },
-  ...
-])
+figma_execute(code: <contents of transfer_execute_01.js>)
+figma_execute(code: <contents of transfer_execute_02.js>)
+...
 ```
 
-Then set aliases using remapped IDs:
+Each call returns `{ created: N, updated: N, failed: N, failedDetails: [...] }`. Check `failedDetails` after each file before running the next.
 
-```
-figma_batch_update_variables([
-  { variableId: <new id>, modeId: <light mode id>, value: { type: "VARIABLE_ALIAS", id: <target id of color/blue/500> } },
-  { variableId: <new id>, modeId: <dark mode id>,  value: { type: "VARIABLE_ALIAS", id: <target id of color/blue/600> } },
-  ...
-])
-```
-
-**For overwrite/merge — updating existing variables:**
-
-Use existing target variable IDs (no creation needed):
-
-```
-figma_batch_update_variables([
-  { variableId: <existing target id>, modeId: <mode id>, value: <source value or remapped alias> },
-  ...
-])
-```
-
-Report progress after each batch: `[Pass 1: 48/48 raw values written] [Pass 2: 24/84 aliases written]`
+The script registers each newly created variable in its local `nameToId` map immediately, so alias variables later in the same chunk can reference variables created earlier in the same chunk — including self-referential aliases (tier 3). No second-pass ID substitution needed.
 
 **For overwrite — deleting target-only variables:**
 
-List them explicitly and ask for a final confirmation before deleting. Delete one at a time via `figma_delete_variable` or via `figma_execute` for bulk deletion.
+List `delete_ids.json` and ask for explicit confirmation, then run:
+
+```js
+// figma_execute — bulk delete (run only after confirmed)
+const ids = [/* paste from delete_ids.json */];
+const allVars = await figma.variables.getLocalVariablesAsync();
+const deleted = [];
+for (const v of allVars) {
+  if (ids.includes(v.id)) { v.remove(); deleted.push(v.name); }
+}
+return { deleted: deleted.length, names: deleted };
+```
 
 ---
 
@@ -333,7 +366,7 @@ Report:
 
 Dangling aliases occur when a transferred variable points to a target that wasn't included in the transfer. For each one:
 
-- **Target variable found by name in the target file** → the ID just needs remapping; fix with `figma_batch_update_variables`
+- **Target variable found by name in the target file** → the ID just needs remapping; fix via `figma_execute`
 - **Target variable doesn't exist at all** → either:
   - Transfer the missing variable (re-run this skill for the missing ones)
   - Create it manually via `token-generate` + `token-push`
@@ -343,12 +376,59 @@ Present each case clearly and ask the user how to handle before making changes.
 
 ---
 
+## Step 9 — Export portable manifest (optional)
+
+After a successful transfer, export a portable name-based manifest. On future re-transfers to different files, load this manifest to skip Steps 1–3 entirely (the source hasn't changed).
+
+```bash
+python "${CLAUDE_SKILL_DIR}/../scripts/build_transfer_payload.py" \
+  transfer-source.json \
+  transfer-target.json \
+  --mode merge \
+  --export-manifest transfer-manifest.json
+```
+
+Manifest format (no file-specific IDs — portable across files):
+
+```json
+[
+  {
+    "collection": "semantic_next",
+    "modes": ["Homebase Light", "Homebase Dark", "Clover Light"],
+    "variables": [
+      {
+        "name": "brand/primary",
+        "type": "COLOR",
+        "description": "",
+        "valuesByMode": {
+          "Homebase Light": { "type": "VARIABLE_ALIAS", "targetName": "color/blue/600" },
+          "Homebase Dark":  { "type": "VARIABLE_ALIAS", "targetName": "color/blue/400" }
+        }
+      }
+    ]
+  }
+]
+```
+
+To use a manifest on a subsequent transfer, pass it as the source instead of re-reading the Figma file:
+
+```bash
+python "${CLAUDE_SKILL_DIR}/../scripts/build_transfer_payload.py" \
+  transfer-manifest.json \
+  transfer-target.json \
+  --mode merge \
+  --from-manifest
+```
+
+---
+
 ## Performance notes
 
-- Variables are transferred in batches of 50 per call
-- Alias ID remapping is done locally in the script before any API calls — no per-variable round-trips
-- For collections of 200+ variables, expect 4–10 batch calls total
-- The broken alias scan is a single `figma_execute` call — not per-variable
+- **Reads (Steps 1 & 2):** Run in parallel — both are independent reads from different files
+- **Reads use `figma_execute`:** Runs inside Figma's plugin runtime in a single call; avoids serialization overhead of multiple `figma_get_variables` round-trips
+- **Writes use `figma_execute` (Step 6):** 150 variables per execution vs 50 per batch API call; alias targets are available immediately after creation within the same call — no deferred ID substitution pass needed
+- **For 600 variables:** ~4 `figma_execute` write calls vs ~24 batch API calls
+- **Broken alias scan (Step 7):** Single `figma_execute` call — not per-variable
 
 ---
 
