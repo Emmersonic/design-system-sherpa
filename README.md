@@ -17,6 +17,7 @@ A set of Claude skills for building and maintaining a 3-tier design token system
 | `token-bridge` | Non-destructive migration path: adds a `Legacy` mode to the `Tokens` collection that maps new semantic token names to an old token system. Components get rebound to new names with zero visual change; graduation to new primitives happens per-token, with visual preview at each step. |
 | `token-repair-aliases` | Scans all collections for broken aliases (pointing to non-existent variable IDs), groups them, infers likely replacements, and applies confirmed fixes. |
 | `token-apply` | Constraint layer for AI-assisted design work — ensures every visual property assigned to a Figma layer comes from the correct token tier. |
+| `token-transfer` | Copies a variable collection from one Figma file to another. Specify which collection(s) to move and how to handle conflicts: overwrite, merge, or add-only. |
 
 Each skill ships with a `scripts/` folder and a `references/token-schema.json`. See [Scripts](#scripts) below.
 
@@ -113,6 +114,8 @@ Skills read and write these files in your working directory:
 | `token-proposal-[category].json` | `token-generate` | `token-push`, `token-audit`, `token-apply` |
 | `bridge-mapping.json` | `token-bridge` | `token-bridge` (Stage 7 rebind) |
 | `bridge-state.json` | `token-bridge` | `token-bridge` (graduation tracking) |
+| `transfer-source.json` | `token-transfer` | `token-transfer`, `build_transfer_payload.py` |
+| `transfer-target.json` | `token-transfer` | `token-transfer`, `build_transfer_payload.py` |
 
 Commit these to your repo alongside your Figma file. They are the source of truth the scripts operate on.
 
@@ -294,6 +297,47 @@ python scripts/validate_tokens.py token-proposal-color.json --fix
 ```
 
 Exit code `0` = pass, `1` = errors found.
+
+---
+
+### `build_transfer_payload.py`
+
+Computes a conflict-aware transfer plan between two Figma files and generates batch payloads for the transfer. Handles alias ID remapping by resolving source IDs to variable names and looking them up in the target file.
+
+```bash
+# Merge mode: update conflicts, preserve target-only variables
+python scripts/build_transfer_payload.py source.json target.json --mode merge --out payloads/
+
+# Add mode: only add new variables, skip conflicts
+python scripts/build_transfer_payload.py source.json target.json --mode add --out payloads/
+
+# Overwrite mode: update conflicts, list target-only variables for deletion
+python scripts/build_transfer_payload.py source.json target.json --mode overwrite --out payloads/
+
+# Preview without writing files
+python scripts/build_transfer_payload.py source.json target.json --mode merge --summary
+
+# Adjust chunk size (default: 50 variables per batch)
+python scripts/build_transfer_payload.py source.json target.json --mode merge --chunk-size 25
+
+# Provide the target collection ID (from figma_get_variables or figma_create_variable_collection)
+python scripts/build_transfer_payload.py source.json target.json --mode merge \
+  --collection-id "VariableCollectionId:1:0" --out payloads/
+```
+
+Input files (`transfer-source.json`, `transfer-target.json`) use a normalized format where alias values reference the target variable's **name** rather than its ID — so cross-file remapping is possible. See the `token-transfer` skill for the format.
+
+Output files are named for their run order:
+```
+payloads/
+  transfer_plan.json             full per-variable action table
+  create_raw_batch_01.json       raw-value variables to create
+  create_alias_batch_01.json     alias variables to create (after raw values exist)
+  update_existing_batch_01.json  existing target variables to update
+  pending_updates_new.json       value updates for newly created variables (fill in IDs post-creation)
+  delete_ids.json                target-only variables to delete (overwrite mode only)
+  transfer_summary.json          counts, dangling aliases, mode mismatches
+```
 
 ---
 
