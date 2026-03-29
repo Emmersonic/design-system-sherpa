@@ -15,6 +15,7 @@ A set of Claude skills for building and maintaining a 3-tier design token system
 | `token-audit` | Health check of an existing token system — naming violations, broken aliases, missing mode values, orphaned tokens. |
 | `token-migrate` | Migrates an existing system (old styles, flat tokens, hardcoded values) to the 3-tier model. |
 | `token-bridge` | Non-destructive migration path: adds a `Legacy` mode to the `Tokens` collection that maps new semantic token names to an old token system. Components get rebound to new names with zero visual change; graduation to new primitives happens per-token, with visual preview at each step. |
+| `token-repair-aliases` | Scans all collections for broken aliases (pointing to non-existent variable IDs), groups them, infers likely replacements, and applies confirmed fixes. |
 | `token-apply` | Constraint layer for AI-assisted design work — ensures every visual property assigned to a Figma layer comes from the correct token tier. |
 
 Each skill ships with a `scripts/` folder and a `references/token-schema.json`. See [Scripts](#scripts) below.
@@ -108,7 +109,7 @@ Skills read and write these files in your working directory:
 | File | Written by | Read by |
 |---|---|---|
 | `foundation.md` | `token-foundation` | all skills |
-| `scaffold-state.json` | `token-figma-scaffold` | `token-push`, `token-apply`, `token-bridge` |
+| `scaffold-state.json` | `token-figma-scaffold` | `token-push`, `token-apply`, `token-generate`, `token-bridge`, `token-repair-aliases` |
 | `token-proposal-[category].json` | `token-generate` | `token-push`, `token-audit`, `token-apply` |
 | `bridge-mapping.json` | `token-bridge` | `token-bridge` (Stage 7 rebind) |
 | `bridge-state.json` | `token-bridge` | `token-bridge` (graduation tracking) |
@@ -482,4 +483,6 @@ All skills share `references/token-schema.json` — a JSON Schema defining the `
 }
 ```
 
-See `references/token-schema.json` in any skill for the full schema with descriptions.
+See `references/token-schema.json` for the full schema with descriptions.
+
+The canonical format for `scaffold-state.json` is defined in `references/scaffold-state-schema.json`.

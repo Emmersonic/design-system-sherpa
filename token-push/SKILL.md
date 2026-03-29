@@ -108,19 +108,33 @@ Component tokens should almost never alias directly to primitives. If you find y
 
 ---
 
-## Step 6 — Verify
+## Step 6 — Verify (required)
 
-After writing, run a verification pass:
+After writing, run a structured verification pass (standard for all Figma-writing skills):
 
+1. **Re-fetch variable counts per collection** — use `figma_get_variables` and confirm the expected number of new variables were created
+2. **Spot-check a sample of values** — pick 3–5 tokens and verify:
+   - Alias chains are intact (gray box indicator in Figma = alias is set)
+   - Both modes have values (no empty/unset mode values)
+   - Token names match the naming convention from `foundation.md`
+3. **Confirm no broken aliases** — scan for any aliases pointing to non-existent variable IDs:
+
+```js
+// figma_execute — quick broken alias check
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allIds = new Set(allVars.map(v => v.id));
+const broken = [];
+for (const v of allVars) {
+  for (const [modeId, value] of Object.entries(v.valuesByMode)) {
+    if (value && typeof value === 'object' && value.type === 'VARIABLE_ALIAS') {
+      if (!allIds.has(value.id)) {
+        broken.push({ name: v.name, modeId, missingId: value.id });
+      }
+    }
+  }
+}
+return broken;
 ```
-figma_browse_tokens(fileUrl: <current file>)
-```
-
-Check:
-- All expected tokens are present
-- Alias chains are intact (gray box indicator in Figma = alias is set)
-- Both modes have values (no empty/unset mode values)
-- Token names match the naming convention from `foundation.md`
 
 Report any discrepancies and fix before closing.
 

@@ -18,6 +18,19 @@ Ask the designer:
 1. Which **category** are we generating? (color, spacing, typography, border-radius, elevation, motion, or a specific component)
 2. Do we need **component tokens** for this category? (buttons, inputs, cards, etc.) — or just primitive + semantic?
 3. Any specific **values, brand colors, or scale** to use? If none provided, propose sensible defaults.
+4. Are we **adding a new mode** to an existing collection (e.g. adding Dark when Light exists)? If so, see the "Alias-only mode generation" section below.
+
+### Building on an existing primitive set
+
+If `scaffold-state.json` exists and contains variable IDs from a previous generation pass, load those IDs and use them as alias targets directly. Do not re-describe primitive values that already exist — reference them by their known IDs.
+
+```
+1. Read scaffold-state.json → extract variable IDs
+2. For each semantic token alias target, use the existing primitive variable ID
+3. Only generate new primitives for values not already in the file
+```
+
+This avoids duplicate primitives and ensures alias chains are stable.
 
 ---
 
@@ -55,6 +68,34 @@ color/blue/900              | color  | #1E3A8A
 - Font sizes: 12, 14, 16, 18, 20, 24, 28, 32, 36, 48
 - Font weights: 400 (regular), 500 (medium), 600 (semibold), 700 (bold)
 - Line heights: 1.25 (tight), 1.5 (normal), 1.75 (relaxed)
+
+### STRING variable aliases (font-family, font-weight)
+
+Not all tokens are colors or numbers. STRING primitives are used for font-family and font-weight values. Include them in the proposal using the same format:
+
+**Primitive STRING tokens:**
+```
+Token name                  | Type    | Value
+----------------------------|---------|------------------
+font-family/sans            | STRING  | Inter, system-ui, sans-serif
+font-family/mono            | STRING  | JetBrains Mono, monospace
+font-weight/regular         | STRING  | Regular
+font-weight/medium          | STRING  | Medium
+font-weight/semibold        | STRING  | Semi Bold
+font-weight/bold            | STRING  | Bold
+```
+
+**Semantic STRING aliases:**
+```
+Token name                      | Light mode alias          | Dark mode alias
+--------------------------------|---------------------------|---------------------------
+text/font-family/default        | font-family/sans          | font-family/sans
+text/font-family/code           | font-family/mono          | font-family/mono
+text/font-weight/heading        | font-weight/semibold      | font-weight/semibold
+text/font-weight/body           | font-weight/regular       | font-weight/regular
+```
+
+STRING aliases follow the same proposal format as COLOR aliases — the `modes` dict maps mode names to primitive token names. The `type` field should be `"STRING"`.
 
 ---
 
@@ -131,6 +172,31 @@ Only generate states that are meaningful for each property. Not every property n
 
 ---
 
+## Step 4b — Generate component token aliases
+
+When wiring component tokens (e.g. `component_next/`) to semantic tokens (e.g. `semantic_next/`), follow this structured path:
+
+1. **List all component token slots** — for each component, enumerate every property × variant × state combination (e.g. `button/background/primary/default`)
+2. **Map each slot to a semantic token** — identify the semantic token that best matches the intent (e.g. `button/background/primary/default` → `color/surface/brand`)
+3. **Handle slots with no semantic equivalent** — if a component slot has no matching semantic token:
+   - Flag it as a gap and propose a new semantic token to create
+   - Or alias directly to a primitive with a note explaining why the semantic tier is skipped
+4. **Present the mapping table** for review before generating
+
+**Format:**
+```
+Component token                         | Semantic alias               | Notes
+----------------------------------------|------------------------------|------------------
+button/background/primary/default       | color/surface/brand          |
+button/background/primary/hover         | color/surface/brand-hover    |
+button/icon/primary/default             | color/icon/on-brand          |
+card/shadow/elevated                    | elevation/md                 | no semantic match — aliased to primitive
+```
+
+Component tokens should almost never alias directly to primitives. If you find yourself doing this, check whether a semantic token should be created first.
+
+---
+
 ## Step 5 — Present for review
 
 Present the full token proposal as tables (primitives → semantic → component) and explicitly ask:
@@ -162,6 +228,40 @@ Fix any errors before proceeding to `token-push`.
 
 ---
 
+## Alias-only mode generation
+
+When adding a new mode to an existing semantic collection (e.g. adding Dark mode when Light already exists with all primitives in place), do not regenerate the full token set. Instead:
+
+1. **Load the existing proposal** — read `token-proposal-[category].json` to get the current token names and light-mode aliases
+2. **Generate a diff, not a full set** — produce only the tokens whose alias target changes in the new mode
+3. **Present as a delta table:**
+
+```
+Token name                      | Light mode (existing)     | Dark mode (new)
+--------------------------------|---------------------------|---------------------------
+color/surface/default           | color/neutral/0           | color/neutral/950
+color/surface/brand             | color/blue/500            | color/blue/600
+color/text/primary              | color/neutral/900         | color/neutral/50
+```
+
+4. Tokens where the value is the same across modes can be omitted from the table (they inherit the same alias)
+5. After approval, update the existing proposal file — add the new mode column to each token's `modes` dict
+
+This keeps proposals focused and avoids re-reviewing tokens that don't change between modes.
+
+---
+
+## When the token-proposal JSON schema doesn't apply
+
+The `references/token-schema.json` schema validates the standard proposal format — primitives with raw values and alias tokens with mode mappings. It does **not** cover:
+
+- **Alias-only proposals** (new modes on existing collections) — these only add mode columns, no new primitives
+- **STRING variable types** (font-family, font-weight) — the schema's `figma_value` definition is color-specific
+
+For these cases, skip `validate_tokens.py` or use it with `--modes` only for the modes that apply. Validate naming conventions and alias integrity manually.
+
+---
+
 ## Notes on typography
 
 Figma currently does not support composite typography variables (a variable that bundles font-family + size + weight + line-height). Typography tokens should be handled as:
@@ -170,3 +270,15 @@ Figma currently does not support composite typography variables (a variable that
 - Figma **text styles** for composite styles (heading, body, label, etc.) — these are created separately and are not part of the variable system
 
 If the designer asks about text styles, note this limitation and offer to generate the text style names and specs in a separate table.
+
+---
+
+## Verification (required)
+
+After saving the proposal file, run a structured verification before handing off:
+
+1. **Re-read the saved file** — confirm it parses as valid JSON and matches the expected structure
+2. **Spot-check a sample of values** — verify 3–5 primitives have correct hex/number values and 3–5 aliases point to valid primitive names
+3. **Confirm no broken aliases** — every alias target in the `modes` dict must correspond to a token name that exists in the proposal's `collections.primitives` array (or already in Figma)
+
+Report any discrepancies before proceeding to `token-push`.

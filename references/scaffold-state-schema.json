@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scaffold State",
+  "description": "Canonical format for scaffold-state.json — written by token-figma-scaffold, read by token-push, token-apply, token-generate, and token-bridge. Defines the Figma collection IDs, mode IDs, and variable ID index needed by downstream skills.",
+  "type": "object",
+  "required": ["figma_file_url", "collection_ids", "mode_ids"],
+  "properties": {
+    "figma_file_url": {
+      "type": "string",
+      "description": "URL of the Figma file these IDs belong to",
+      "examples": ["https://www.figma.com/file/abc123/My-Design-System"]
+    },
+    "collection_ids": {
+      "type": "object",
+      "description": "Map of collection name to Figma collection ID",
+      "required": ["primitives", "tokens"],
+      "properties": {
+        "primitives": {
+          "type": "string",
+          "description": "ID of the Primitives collection (hidden from publishing)",
+          "examples": ["VariableCollectionId:123:456"]
+        },
+        "tokens": {
+          "type": "string",
+          "description": "ID of the Tokens (semantic) collection",
+          "examples": ["VariableCollectionId:123:789"]
+        },
+        "components": {
+          "type": ["string", "null"],
+          "description": "ID of the Components collection, or null if not used",
+          "examples": ["VariableCollectionId:123:012", null]
+        }
+      }
+    },
+    "mode_ids": {
+      "type": "object",
+      "description": "Map of mode name (lowercase) to Figma mode ID. Includes all modes across all collections.",
+      "additionalProperties": { "type": "string" },
+      "examples": [
+        {
+          "value": "1:0",
+          "light": "2:0",
+          "dark": "2:1"
+        }
+      ]
+    },
+    "variable_ids": {
+      "type": "object",
+      "description": "Map of token name to Figma variable ID. Populated incrementally as variables are created. Used as alias targets by downstream skills.",
+      "additionalProperties": { "type": "string" },
+      "examples": [
+        {
+          "color/blue/500": "VariableID:123:456",
+          "color/surface/default": "VariableID:123:789"
+        }
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the scaffold was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the last update to this file"
+    }
+  }
+}
