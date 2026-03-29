@@ -230,7 +230,7 @@ Raw values used (unacceptable — requires follow-up):
 If any raw values were used because no token existed and no direction was given, flag them explicitly and recommend creating the missing tokens via `token-generate`. If multiple gaps were found, you can validate the full token set for coverage issues:
 
 ```bash
-python scripts/validate_tokens.py token-proposal-[category].json --modes light dark
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/validate_tokens.py" token-proposal-[category].json --modes light dark
 ```
 
 ---

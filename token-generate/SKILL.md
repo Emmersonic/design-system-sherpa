@@ -146,7 +146,7 @@ Present the full token proposal as tables (primitives → semantic → component
 
 ## Step 6 — Save the proposal file
 
-After the designer confirms the token tables, save the proposal as `token-proposal-[category].json` conforming to `references/token-schema.json`.
+After the designer confirms the token tables, save the proposal as `token-proposal-[category].json` conforming to `${CLAUDE_SKILL_DIR}/../_shared/references/token-schema.json`.
 
 Key points:
 - `meta.status` must be `"draft"` at this point — the designer confirms it to `"approved"` before pushing
@@ -155,7 +155,7 @@ Key points:
 
 Run validation before handing off:
 ```bash
-python scripts/validate_tokens.py token-proposal-[category].json --modes light dark
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/validate_tokens.py" token-proposal-[category].json --modes light dark
 ```
 
 Fix any errors before proceeding to `token-push`.

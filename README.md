@@ -14,6 +14,7 @@ A set of Claude skills for building and maintaining a 3-tier design token system
 | `token-push` | Validates and pushes an approved token proposal into Figma. Writes variable IDs back to the proposal file. |
 | `token-audit` | Health check of an existing token system — naming violations, broken aliases, missing mode values, orphaned tokens. |
 | `token-migrate` | Migrates an existing system (old styles, flat tokens, hardcoded values) to the 3-tier model. |
+| `token-bridge` | Non-destructive migration path: adds a `Legacy` mode to the `Tokens` collection that maps new semantic token names to an old token system. Components get rebound to new names with zero visual change; graduation to new primitives happens per-token, with visual preview at each step. |
 | `token-apply` | Constraint layer for AI-assisted design work — ensures every visual property assigned to a Figma layer comes from the correct token tier. |
 
 Each skill ships with a `scripts/` folder and a `references/token-schema.json`. See [Scripts](#scripts) below.
@@ -40,7 +41,9 @@ Design layers       bound in Figma
 
 ## Pipeline
 
-Run skills in this order when setting up a new system:
+### New system
+
+Run skills in this order when setting up a system from scratch:
 
 ```
 token-foundation  →  foundation.md
@@ -56,6 +59,44 @@ token-push  →  variables in Figma + figma_ids written back to proposal
 token-audit  (run periodically, before releases, after adding components)
 ```
 
+### Migrating an existing system
+
+Two paths depending on how much risk is acceptable:
+
+```
+                        existing Figma file
+                               ↓
+                    token-foundation  →  foundation.md
+                    token-figma-scaffold  →  scaffold-state.json
+                    token-generate + token-push  (new primitives + semantics)
+                               ↓
+              ┌────────────────┴─────────────────┐
+              │                                  │
+        token-bridge                       token-migrate
+    (non-destructive)                      (destructive)
+              │                                  │
+    Adds Legacy mode to Tokens          Replaces old bindings
+    Components rebound with             with new token values
+    zero visual change                  in one pass
+    Graduation is per-token             No rollback once applied
+    and reversible                      Best for smaller systems
+              │                                  │
+              └──────────────┬───────────────────┘
+                             ↓
+                        token-audit
+```
+
+**Use `token-bridge` when:**
+- The design system is large (many components, many token consumers)
+- The team needs zero visual disruption during migration
+- You want to graduate tokens category-by-category and validate at each step
+- There's an ongoing product team using the library who can't absorb a big-bang change
+
+**Use `token-migrate` when:**
+- The old system is small or poorly structured (easier to cut over cleanly)
+- You're replacing hardcoded values or Figma styles (no variables to alias)
+- The migration can happen in a branch or duplicate file with no active consumers
+
 `token-apply` is not a one-time setup step — it's a constraint layer loaded whenever an AI agent is creating or modifying designs in Figma.
 
 ---
@@ -67,8 +108,10 @@ Skills read and write these files in your working directory:
 | File | Written by | Read by |
 |---|---|---|
 | `foundation.md` | `token-foundation` | all skills |
-| `scaffold-state.json` | `token-figma-scaffold` | `token-push`, `token-apply` |
+| `scaffold-state.json` | `token-figma-scaffold` | `token-push`, `token-apply`, `token-bridge` |
 | `token-proposal-[category].json` | `token-generate` | `token-push`, `token-audit`, `token-apply` |
+| `bridge-mapping.json` | `token-bridge` | `token-bridge` (Stage 7 rebind) |
+| `bridge-state.json` | `token-bridge` | `token-bridge` (graduation tracking) |
 
 Commit these to your repo alongside your Figma file. They are the source of truth the scripts operate on.
 
@@ -255,20 +298,19 @@ cd ~/ds-token-skills
 **2. Run the install script**
 
 ```bash
-# Install skills into ~/.claude/skills/ and copy scripts to your project
-./install.sh --scripts /path/to/your/design-system-project
-```
-
-This symlinks each skill directory into `~/.claude/skills/` and copies the shared Python scripts into your project's `scripts/` folder.
-
-Skills only (no scripts):
-```bash
 ./install.sh
 ```
 
-Then copy scripts manually when you're ready:
+This will symlink the skills into `~/.claude/skills/` and prompt you for your design system project path to copy the Python scripts there.
+
+To skip the prompt and provide the path upfront:
 ```bash
-cp -r scripts/ /path/to/your/project/scripts/
+./install.sh --scripts /path/to/your/design-system-project
+```
+
+To install skills only without copying scripts:
+```bash
+./install.sh --skip-scripts
 ```
 
 **3. Reload Claude Code** to pick up the new skills.

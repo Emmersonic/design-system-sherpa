@@ -3,32 +3,16 @@ set -e
 
 # install.sh — Install ds-token-skills into Claude Code
 #
-# This script links the skills directory into ~/.claude/skills/ and optionally
-# copies the shared scripts into your project so Claude can run them.
+# Symlinks the skills into ~/.claude/skills/ and copies shared scripts
+# and references to ~/.claude/skills/_shared/.
 #
 # Usage:
-#   ./install.sh                     # install skills only
-#   ./install.sh --scripts ./path    # install skills + copy scripts to a project directory
+#   ./install.sh
 
 SKILLS_DIR="$HOME/.claude/skills"
+SHARED_DIR="$SKILLS_DIR/_shared"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_NAMES=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply)
-
-# Parse args
-SCRIPTS_DEST=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --scripts)
-      SCRIPTS_DEST="$2"
-      shift 2
-      ;;
-    *)
-      echo "Unknown option: $1"
-      echo "Usage: $0 [--scripts <project-dir>]"
-      exit 1
-      ;;
-  esac
-done
+SKILL_NAMES=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge)
 
 echo "Installing ds-token-skills..."
 echo
@@ -56,31 +40,22 @@ echo
 echo "Skills installed to $SKILLS_DIR"
 echo "  $(ls "$SKILLS_DIR" | grep "^token-" | wc -l | tr -d ' ') skills available"
 
-# Optionally copy scripts to a project directory
-if [ -n "$SCRIPTS_DEST" ]; then
-  echo
-  if [ ! -d "$SCRIPTS_DEST" ]; then
-    echo "Error: --scripts destination does not exist: $SCRIPTS_DEST"
-    exit 1
-  fi
-  DEST_SCRIPTS="$SCRIPTS_DEST/scripts"
-  mkdir -p "$DEST_SCRIPTS"
-  cp "$REPO_DIR"/scripts/*.py "$DEST_SCRIPTS/"
-  echo "Scripts copied to $DEST_SCRIPTS"
-  echo "  $(ls "$DEST_SCRIPTS"/*.py | wc -l | tr -d ' ') scripts available"
-fi
+# Install shared scripts and references to ~/.claude/skills/_shared/
+echo
+echo "Installing shared resources to $SHARED_DIR..."
+
+mkdir -p "$SHARED_DIR/scripts"
+mkdir -p "$SHARED_DIR/references"
+cp "$REPO_DIR"/scripts/*.py "$SHARED_DIR/scripts/"
+cp "$REPO_DIR"/references/* "$SHARED_DIR/references/"
+
+echo "  $(ls "$SHARED_DIR/scripts/"*.py | wc -l | tr -d ' ') scripts available"
+echo "  $(ls "$SHARED_DIR/references/" | wc -l | tr -d ' ') reference files available"
 
 echo
-echo "Next steps:"
-echo "  1. Reload Claude Code (or restart) to pick up the new skills"
-if [ -z "$SCRIPTS_DEST" ]; then
-  echo "  2. Copy scripts to your design system project:"
-  echo "       ./install.sh --scripts /path/to/your/project"
-  echo "     Or manually: cp -r scripts/ /path/to/your/project/scripts"
-fi
-echo "  3. Add a CLAUDE.md to your project pointing to your foundation.md"
+echo "Done. Reload Claude Code to pick up the new skills."
 echo
-echo "Skills installed:"
+echo "Skills available:"
 for skill in "${SKILL_NAMES[@]}"; do
   echo "  /$skill"
 done

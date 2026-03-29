@@ -120,7 +120,7 @@ Aggregate to the highest applicable level and note whether this audit cycle resu
 Before writing the report manually, run the diff script if a previous proposal snapshot exists:
 
 ```bash
-python scripts/diff_tokens.py token-proposal-[category]-prev.json token-proposal-[category].json --format markdown
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/diff_tokens.py" token-proposal-[category]-prev.json token-proposal-[category].json --format markdown
 ```
 
 This generates the changelog entry and version impact classification automatically. Use its output as the basis for the report's **Changelog entry** and **Version impact** sections.

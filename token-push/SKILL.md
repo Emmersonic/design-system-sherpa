@@ -24,7 +24,7 @@ Load `token-proposal-[category].json`. Verify `meta.status` is `"approved"` — 
 
 Run validation:
 ```bash
-python scripts/validate_tokens.py token-proposal-[category].json --modes light dark
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/validate_tokens.py" token-proposal-[category].json --modes light dark
 ```
 
 If there are errors, fix them before proceeding. Warnings can be noted but don't block the push.
@@ -57,7 +57,7 @@ Extract and note:
 Use `build_batch_payload.py` to chunk the proposal into Figma-ready batches and convert hex colors:
 
 ```bash
-python scripts/build_batch_payload.py token-proposal-[category].json --out payloads/
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/build_batch_payload.py" token-proposal-[category].json --out payloads/
 ```
 
 This produces `create_primitives_batch_NN.json`, `create_tokens_batch_NN.json`, and `update_tokens_aliases_batch_NN.json` files. Check the summary output for total API call count.
@@ -138,7 +138,7 @@ Write the Figma-assigned variable IDs back to the proposal file under `figma_ids
 
 Optionally generate the CSS output now:
 ```bash
-python scripts/tokens_to_css.py token-proposal-[category].json --format css --all-modes --out tokens-[category].css
+python "${CLAUDE_SKILL_DIR}/../_shared/scripts/tokens_to_css.py" token-proposal-[category].json --format css --all-modes --out tokens-[category].css
 ```
 
 ---
