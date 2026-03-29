@@ -24,11 +24,24 @@ Copies a variable collection from a source Figma file into a target Figma file. 
 
 ## Step 1 — Read the source collection
 
+Use `format: 'filtered'` with the collection name and `verbosity: 'standard'` to fetch only the target collection. For large libraries this is significantly faster than pulling everything.
+
 ```
-figma_get_variables(fileUrl: <source file>)
+figma_get_variables(
+  fileUrl: <source file>,
+  format: "filtered",
+  collection: "<collection name>",
+  verbosity: "standard"
+)
 ```
 
-Filter to the requested collection(s). For each variable, record:
+If the collection name isn't known yet, run a cheap summary first to list available collections (no variable data):
+
+```
+figma_get_variables(fileUrl: <source file>, format: "summary")
+```
+
+For each variable in the response, record:
 - ID, name, type (COLOR, FLOAT, STRING, BOOLEAN)
 - Value per mode (raw value or alias — note whether it's a `VARIABLE_ALIAS` and the alias target's ID)
 - Description
@@ -85,11 +98,28 @@ Variables: 132 (84 aliases, 48 raw values)
 
 ## Step 2 — Read the target collection
 
+Fetch the matching collection from the target file using the same filtered approach. Also fetch a name → ID inventory of all variables in the target file (needed for alias remapping):
+
 ```
-figma_get_variables(fileUrl: <target file>)
+# Fetch the matching collection for conflict detection
+figma_get_variables(
+  fileUrl: <target file>,
+  format: "filtered",
+  collection: "<collection name>",
+  verbosity: "standard"
+)
+
+# Fetch all variable names + IDs across the whole file for alias remapping
+figma_get_variables(
+  fileUrl: <target file>,
+  format: "filtered",
+  verbosity: "inventory"
+)
 ```
 
-Check whether a collection with the same name exists in the target. Build a name → ID lookup of all target variables (across all collections).
+`verbosity: "inventory"` returns names and IDs only (~95% smaller than full) — sufficient for building the alias remapping table without loading all values.
+
+Check whether a collection with the same name exists in the target.
 
 Save the target state to `transfer-target.json` in the same normalized format.
 

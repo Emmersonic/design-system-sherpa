@@ -24,8 +24,16 @@ Scan the current Figma file for everything that needs to be migrated.
 
 ### 1a. Find existing variables
 
+Fetch each collection separately to avoid loading everything at once. Start with a summary to see what collections exist:
+
 ```
-figma_get_variables(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, format: "summary")
+```
+
+Then load each collection's data:
+
+```
+figma_get_variables(fileUrl: <current file>, format: "filtered", collection: "<collection name>", verbosity: "standard")
 ```
 
 List all existing variables with:

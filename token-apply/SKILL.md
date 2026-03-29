@@ -24,9 +24,11 @@ Before assigning any property, check the working directory for local context fil
 
 **If local context is absent or incomplete, fall back to live reads:**
 ```
-figma_get_variables(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, format: "filtered", collection: "<collection name>", verbosity: "standard")
 figma_browse_tokens(fileUrl: <current file>)
 ```
+
+Use `format: "filtered"` with the specific collection name to avoid pulling all variables at once. If the collection name isn't known, run `format: "summary"` first to list available collections.
 
 Do not proceed from memory or assume token names. Token systems change, and a token you expect to exist might not, or might have a different name.
 

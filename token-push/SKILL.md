@@ -39,10 +39,10 @@ Wait for confirmation.
 
 ## Step 2 — Get collection IDs
 
-If collection IDs aren't already known:
+If collection IDs aren't already known, fetch a summary (collection names, IDs, and modes only — no variable data):
 
 ```
-figma_get_variables(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, format: "summary")
 ```
 
 Extract and note:
@@ -112,7 +112,7 @@ Component tokens should almost never alias directly to primitives. If you find y
 
 After writing, run a structured verification pass (standard for all Figma-writing skills):
 
-1. **Re-fetch variable counts per collection** — use `figma_get_variables` and confirm the expected number of new variables were created
+1. **Re-fetch variable counts per collection** — use `figma_get_variables(format: "summary")` and confirm the expected number of new variables were created
 2. **Spot-check a sample of values** — pick 3–5 tokens and verify:
    - Alias chains are intact (gray box indicator in Figma = alias is set)
    - Both modes have values (no empty/unset mode values)

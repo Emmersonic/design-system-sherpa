@@ -71,10 +71,10 @@ Confirms which collections exist. Identify:
 - The Tokens (semantic) collection ID and existing mode IDs
 - Component categories and counts (used for batching in Stage 3)
 
-Also fetch all variables to build the ID→name lookup:
+Also fetch all variables to build the ID→name lookup. Use `verbosity: "inventory"` to get names and IDs only (~95% smaller than full) — sufficient for building the mapping table:
 
 ```
-figma_get_variables(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, verbosity: "inventory")
 ```
 
 Save to `bridge-inventory.json`. Record legacy collection ID, Tokens collection ID, and all existing mode IDs.

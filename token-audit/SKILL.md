@@ -21,12 +21,20 @@ Run this periodically (e.g. after adding a new component, before a release, or w
 
 ## Step 1 — Pull current token state
 
+Start with a summary to get collection names, counts, and mode structure without loading all variable data:
+
 ```
-figma_get_variables(fileUrl: <current file>)
-figma_browse_tokens(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, format: "summary")
 ```
 
-Capture the full list of variables across all collections. Note:
+Then load each collection's variables using `format: "filtered"` to avoid fetching everything at once. For large libraries (200+ variables) this is significantly faster:
+
+```
+figma_get_variables(fileUrl: <current file>, format: "filtered", collection: "Primitives", verbosity: "standard")
+figma_get_variables(fileUrl: <current file>, format: "filtered", collection: "Tokens", verbosity: "standard")
+```
+
+Repeat for each collection present. Note:
 - Collection names and mode names
 - Total variable count per collection
 - All variable names

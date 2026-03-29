@@ -30,10 +30,10 @@ Read `foundation.md` and extract:
 
 ## Step 2 — Check what already exists
 
-Use `figma_get_variables` to inspect the current file state:
+Use `figma_get_variables` in summary mode to inspect collection and mode structure without loading all variable data:
 
 ```
-figma_get_variables(fileUrl: <current file>)
+figma_get_variables(fileUrl: <current file>, format: "summary")
 ```
 
 Report to the designer:
@@ -145,7 +145,7 @@ state.variables[name] = variable.id; // capture immediately
 
 After creating collections, run a structured verification (required for all Figma-writing skills):
 
-1. **Re-fetch variable counts** — use `figma_get_variables` to confirm the expected number of collections and modes exist
+1. **Re-fetch variable counts** — use `figma_get_variables(format: "summary")` to confirm the expected number of collections and modes exist
 2. **Spot-check properties** — use `figma_browse_tokens` to confirm:
    - Collection names and mode names match the plan
    - `Primitives` is hidden from publishing
