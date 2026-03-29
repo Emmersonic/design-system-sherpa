@@ -12,7 +12,7 @@ set -e
 SKILLS_DIR="$HOME/.claude/skills"
 SHARED_DIR="$SKILLS_DIR/_shared"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_NAMES=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge)
+SKILL_NAMES=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge token-repair-aliases token-transfer)
 
 echo "Installing ds-token-skills..."
 echo
