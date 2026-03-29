@@ -1,0 +1,206 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Token Proposal",
+  "description": "Shared data contract for the token skill pipeline. Written by token-generate, read by token-push, token-audit, and tokens-to-css.",
+  "type": "object",
+  "required": ["meta", "collections"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["generated_at", "category", "version", "figma_file_url"],
+      "properties": {
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when this proposal was generated"
+        },
+        "category": {
+          "type": "string",
+          "description": "Token category this proposal covers",
+          "examples": ["color", "spacing", "typography", "border-radius", "elevation", "motion", "button"]
+        },
+        "version": {
+          "type": "string",
+          "description": "Semantic version of the token system at time of generation",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "examples": ["1.0.0", "1.2.0", "2.0.0"]
+        },
+        "figma_file_url": {
+          "type": "string",
+          "description": "URL of the target Figma file",
+          "examples": ["https://www.figma.com/file/abc123/My-Design-System"]
+        },
+        "foundation_ref": {
+          "type": "string",
+          "description": "Path to the foundation.md this proposal was built from",
+          "default": "foundation.md"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "reviewed", "approved", "pushed", "rejected"],
+          "description": "Lifecycle state of the proposal. token-push requires 'approved'.",
+          "default": "draft"
+        },
+        "approved_by": {
+          "type": "string",
+          "description": "Name or identifier of who approved the proposal"
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pushed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Set by token-push after writing to Figma"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-text notes about this proposal"
+        }
+      }
+    },
+
+    "collections": {
+      "type": "object",
+      "description": "Token variables grouped by their target Figma collection",
+      "properties": {
+        "primitives": {
+          "type": "array",
+          "description": "Raw value tokens — go into the Primitives collection, hidden from publishing",
+          "items": { "$ref": "#/$defs/primitive_token" }
+        },
+        "tokens": {
+          "type": "array",
+          "description": "Semantic and component tokens — go into the Tokens collection, one value per mode",
+          "items": { "$ref": "#/$defs/alias_token" }
+        },
+        "components": {
+          "type": "array",
+          "description": "Optional separate component token collection",
+          "items": { "$ref": "#/$defs/alias_token" }
+        }
+      }
+    },
+
+    "figma_ids": {
+      "type": "object",
+      "description": "Written by token-push after variables are created in Figma. Used for subsequent updates.",
+      "properties": {
+        "collection_ids": {
+          "type": "object",
+          "properties": {
+            "primitives": { "type": "string" },
+            "tokens": { "type": "string" },
+            "components": { "type": "string" }
+          }
+        },
+        "mode_ids": {
+          "type": "object",
+          "description": "Map of mode name to Figma mode ID",
+          "additionalProperties": { "type": "string" },
+          "examples": [{ "light": "1:0", "dark": "1:1" }]
+        },
+        "variable_ids": {
+          "type": "object",
+          "description": "Map of token name to Figma variable ID, written after push",
+          "additionalProperties": { "type": "string" },
+          "examples": [{ "color/blue/500": "VariableID:123:456" }]
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "primitive_token": {
+      "type": "object",
+      "required": ["name", "type", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full token path using slash separators in kebab-case",
+          "examples": ["color/blue/500", "spacing/4", "border-radius/md", "font-size/16"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["COLOR", "FLOAT", "STRING", "BOOLEAN"],
+          "description": "Figma variable type"
+        },
+        "value": {
+          "description": "Raw value. Colors use hex string; numbers use numeric; strings use string.",
+          "oneOf": [
+            { "type": "string", "description": "Hex color (#RRGGBB or #RRGGBBAA) or string value" },
+            { "type": "number", "description": "Numeric value for FLOAT tokens" },
+            { "type": "boolean", "description": "Boolean value" }
+          ],
+          "examples": ["#3B82F6", 16, "Inter, system-ui, sans-serif", true]
+        },
+        "figma_value": {
+          "$ref": "#/$defs/figma_color",
+          "description": "Pre-converted Figma color object. Populated by hex_to_figma.py. If absent, token-push will convert from value."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description shown in Figma variable panel"
+        },
+        "scopes": {
+          "type": "array",
+          "description": "Figma scopes to restrict where this variable can be applied",
+          "items": {
+            "type": "string",
+            "enum": ["ALL_SCOPES", "FILL_COLOR", "TEXT_FILL", "STROKE_COLOR", "CORNER_RADIUS", "WIDTH_HEIGHT", "GAP", "FONT_SIZE", "FONT_WEIGHT", "FONT_FAMILY", "LINE_HEIGHT", "OPACITY", "EFFECT_COLOR"]
+          }
+        }
+      }
+    },
+
+    "alias_token": {
+      "type": "object",
+      "required": ["name", "type", "modes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full token path using slash separators in kebab-case",
+          "examples": ["color/surface/default", "button/background/primary/hover"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["COLOR", "FLOAT", "STRING", "BOOLEAN"]
+        },
+        "modes": {
+          "type": "object",
+          "description": "Map of mode name to alias target token name. Value must be a token name that exists in this proposal or already in Figma.",
+          "additionalProperties": { "type": "string" },
+          "examples": [
+            { "light": "color/neutral/0", "dark": "color/neutral/950" },
+            { "light": "spacing/4", "dark": "spacing/4" }
+          ],
+          "minProperties": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["semantic", "component"],
+          "description": "Whether this is a semantic or component-level token. Inferred from name if absent."
+        }
+      }
+    },
+
+    "figma_color": {
+      "type": "object",
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "number", "minimum": 0, "maximum": 1 },
+        "g": { "type": "number", "minimum": 0, "maximum": 1 },
+        "b": { "type": "number", "minimum": 0, "maximum": 1 },
+        "a": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}
