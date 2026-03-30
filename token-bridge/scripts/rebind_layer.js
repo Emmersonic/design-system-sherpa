@@ -33,7 +33,7 @@ const options = {
 
 // ─── Validate inputs ─────────────────────────────────────────────────────────
 
-const root = figma.getNodeById(options.componentNodeId);
+const root = await figma.getNodeByIdAsync(options.componentNodeId);
 if (!root) throw new Error(`Node not found: ${options.componentNodeId}`);
 if (Object.keys(options.mapping).length === 0) {
   throw new Error('mapping is empty — populate it from bridge-mapping.json before running');

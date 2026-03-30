@@ -11,6 +11,19 @@ The legacy collection is never modified. Light and dark modes live on the semant
 
 ---
 
+> **Plugin API requirement**
+> All `figma_execute` scripts must use the `Async` API variants exclusively:
+> - `figma.variables.getLocalVariablesAsync()`
+> - `figma.variables.getLocalVariableCollectionsAsync()`
+> - `figma.getNodeByIdAsync(nodeId)`
+>
+> The synchronous forms (`getLocalVariables()`, `getLocalVariableCollections()`, `getNodeById()`) throw errors in the current plugin context (`documentAccess: dynamic-page`).
+
+> **Variable ID safety**
+> `figma_get_variables` and other MCP tools return IDs from a REST API cache that can differ from the real plugin API IDs. Use MCP tools for human-readable exploration only — **never** use their IDs for write operations (alias-setting, rebinding). Always source IDs used in `setValueForMode` or `setBoundVariable` from a `figma_execute` call that reads `getLocalVariablesAsync()` in the same session.
+
+---
+
 ## Step 0 — Clarify bridge level
 
 **Before doing anything else, ask the designer:**
@@ -67,27 +80,84 @@ figma_get_design_system_summary()
 ```
 
 Confirms which collections exist. Identify:
-- The legacy token collection name and ID (this will not be modified)
-- The Tokens (semantic) collection ID and existing mode IDs
-- Component categories and counts (used for batching in Stage 3)
+- The legacy token collection name (this will not be modified)
+- The Tokens (semantic) collection and existing mode IDs
+- Component categories and counts
 
-Also fetch all variables to build the ID→name lookup. Use `verbosity: "inventory"` to get names and IDs only (~95% smaller than full) — sufficient for building the mapping table:
+Then build the full name→ID lookup for both the legacy and Tokens collections in a single `figma_execute` call:
 
+```js
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+
+// Identify collections by name — update these to match your file
+const LEGACY_COLL_NAME = 'REPLACE_WITH_LEGACY_COLLECTION_NAME';
+const TOKENS_COLL_NAME = 'REPLACE_WITH_TOKENS_COLLECTION_NAME';
+
+const legacyColl = allColls.find(c => c.name === LEGACY_COLL_NAME);
+const tokensColl = allColls.find(c => c.name === TOKENS_COLL_NAME);
+
+if (!legacyColl) throw new Error(`Legacy collection "${LEGACY_COLL_NAME}" not found`);
+if (!tokensColl) throw new Error(`Tokens collection "${TOKENS_COLL_NAME}" not found`);
+
+const legacyById  = {};
+const tokensByName = {};
+
+for (const v of allVars) {
+  if (v.variableCollectionId === legacyColl.id) {
+    legacyById[v.name] = v.id;
+  }
+  if (v.variableCollectionId === tokensColl.id) {
+    tokensByName[v.name] = v.id;
+  }
+}
+
+return {
+  legacyCollectionId:  legacyColl.id,
+  tokensCollectionId:  tokensColl.id,
+  tokensModesIds:      tokensColl.modes,
+  legacyCount:         Object.keys(legacyById).length,
+  tokensCount:         Object.keys(tokensByName).length,
+  legacyById,
+  tokensByName,
+};
 ```
-figma_get_variables(fileUrl: <current file>, verbosity: "inventory")
-```
 
-Save to `bridge-inventory.json`. Record legacy collection ID, Tokens collection ID, and all existing mode IDs.
+Save the full output to `bridge-inventory.json`. Record:
+- `legacyCollectionId`
+- `tokensCollectionId`
+- `tokensModesIds`
+- `legacyById` — name→ID map for the legacy collection
+- `tokensByName` — name→ID map for the Tokens collection
+
+All subsequent stages that need variable IDs load from this file. Only re-run this `figma_execute` call if new variables are added mid-session.
 
 ---
 
 ## Stage 2 — Inventory legacy tokens
 
-Get the full set of legacy tokens and their resolved values.
+Get the full set of legacy tokens and their resolved values using the Variables API:
 
-```
-figma_get_token_values(type: "colors", limit: 50)
-figma_get_token_values(type: "spacing", limit: 50)
+```js
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+
+// Use the collection ID from bridge-inventory.json
+const LEGACY_COLLECTION_ID = 'REPLACE_WITH_LEGACY_COLLECTION_ID';
+
+const legacyColl = allColls.find(c => c.id === LEGACY_COLLECTION_ID);
+if (!legacyColl) throw new Error('Legacy collection not found');
+
+const defaultModeId = legacyColl.defaultModeId;
+const legacyVars = allVars.filter(v => v.variableCollectionId === LEGACY_COLLECTION_ID);
+
+const inventory = legacyVars.map(v => {
+  const val = v.valuesByMode[defaultModeId];
+  const resolved = val?._a ? `alias → ${val._a}` : JSON.stringify(val);
+  return { name: v.name, id: v.id, type: v.resolvedType, resolved };
+});
+
+return { count: inventory.length, inventory };
 ```
 
 Produce a table:
@@ -103,9 +173,26 @@ Spacing/Base         | VariableID:1:20     | FLOAT  | 16
 
 This is the lookup used when building aliases in Stage 6.
 
+### Stage 2 exit check — skip Stage 3?
+
+After the inventory, examine the naming patterns in both the legacy and new collections. If both collections use **component-prefixed names** (e.g. `button/primary/brand`, `input/border/default`) with enough context to determine semantic intent directly from the name, Stage 3 can be skipped.
+
+**Skip Stage 3 if:**
+- Legacy token names include the component and state context (e.g. `button/bg/hover`, `status/neutral/surface`)
+- New token names follow the same component-level convention
+- No ambiguity exists about which new token a legacy token maps to
+
+Proceed to Stage 4 with a note: *"Stage 3 skipped — both collections use component-level naming, mapping built directly from names."*
+
+**Run Stage 3 if:**
+- Legacy tokens are visually grounded (e.g. `Primary`, `Blue-500`, `Brand`) and the correct new semantic name depends on which component is using the token
+- Naming is ambiguous and requires inspecting component layers to determine correct mapping
+
 ---
 
 ## Stage 3 — Scan component bindings (batched)
+
+> **Skip if** both collections use component-level naming (see Stage 2 exit check).
 
 Scan what legacy tokens are used on, and in what context. Work in batches of 25 component sets.
 
@@ -220,9 +307,12 @@ The same legacy token mapping to different semantic tokens across components is 
 
 ```js
 // via figma_execute
-const collection = figma.variables.getVariableCollectionById('<tokens-collection-id>');
+const collections = await figma.variables.getLocalVariableCollectionsAsync();
+const collection = collections.find(c => c.id === '<tokens-collection-id>');
+if (!collection) throw new Error('Tokens collection not found');
 const legacyModeId = collection.addMode('Legacy');
 console.log('Legacy mode ID:', legacyModeId);
+return { legacyModeId };
 ```
 
 Update `scaffold-state.json`:
@@ -245,6 +335,7 @@ const collection = figma.variables.createVariableCollection('Components');
 const legacyModeId = collection.addMode('Legacy');
 // Rename the default mode if one was created automatically
 console.log('Collection ID:', collection.id, 'Legacy mode ID:', legacyModeId);
+return { collectionId: collection.id, legacyModeId };
 ```
 
 Save to `bridge-state.json`:
@@ -279,23 +370,49 @@ figma_batch_create_variables(
 )
 ```
 
-Record returned variable IDs in `bridge-state.json`.
+Record returned variable IDs in `bridge-state.json`. These are the authoritative IDs — use them in 6b, not IDs from `figma_get_variables`.
 
 #### 6b. Set Legacy mode aliases → legacy collection
 
+Set all aliases in a single `figma_execute` call. Build the MAP from `bridge-mapping.json` (legacy name → new semantic name). The name→ID lookups come from `bridge-inventory.json` (built in Stage 1) inlined into the script.
+
 ```js
-// via figma_execute — batches of 50
-const LEGACY_MODE_ID = 'REPLACE';
-const entries = [
-  { newVarId: 'VariableID:new:1', oldVarId: 'VariableID:legacy:10' },
-  ...
+// via figma_execute
+const LEGACY_MODE_ID = 'REPLACE_WITH_LEGACY_MODE_ID';
+
+// MAP: [ [new semantic token name, legacy token name], ... ]
+// Inline all entries — no need to batch; a single call handles 400+ aliases
+const MAP = [
+  ['color/surface/action', 'Primary'],
+  ['color/text/link',      'Primary'],
+  // ... all entries from bridge-mapping.json
 ];
 
-for (const { newVarId, oldVarId } of entries) {
-  const v = figma.variables.getVariableById(newVarId);
-  v.setValueForMode(LEGACY_MODE_ID, { type: 'VARIABLE_ALIAS', id: oldVarId });
+// Build name→ID lookups from the live plugin API (not MCP cache)
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+
+const TOKENS_COLL_ID = 'REPLACE_WITH_TOKENS_COLLECTION_ID';
+const LEGACY_COLL_ID = 'REPLACE_WITH_LEGACY_COLLECTION_ID';
+
+const newByName    = {};
+const legacyByName = {};
+for (const v of allVars) {
+  if (v.variableCollectionId === TOKENS_COLL_ID) newByName[v.name]    = v;
+  if (v.variableCollectionId === LEGACY_COLL_ID) legacyByName[v.name] = v;
 }
-return `Set ${entries.length} Legacy aliases`;
+
+let set = 0;
+const errors = [];
+for (const [newName, legName] of MAP) {
+  const newVar    = newByName[newName];
+  const legacyVar = legacyByName[legName];
+  if (!newVar)    { errors.push(`New token not found: ${newName}`);    continue; }
+  if (!legacyVar) { errors.push(`Legacy token not found: ${legName}`); continue; }
+  newVar.setValueForMode(LEGACY_MODE_ID, { type: 'VARIABLE_ALIAS', id: legacyVar.id });
+  set++;
+}
+return { set, errors };
 ```
 
 #### 6c. Set placeholder values for Light and Dark modes
@@ -332,48 +449,137 @@ figma_batch_create_variables(
 
 #### 6b. Set Legacy mode aliases → legacy collection (direct, bypasses semantic layer)
 
+Set all aliases in a single `figma_execute` call. Use the live plugin API for all IDs.
+
+> **Name-collision warning:** If the component collection shares token names with the Tokens (semantic) collection (e.g. `text/primary`, `status/neutral/surface`), build two separate name→ID maps — one for pre-existing variables (`priorByName`) and one for the newly created component variables (`compByName`). Always resolve alias targets using `priorByName` first. Using a single merged map causes newly created variables to alias themselves, producing silent `#FFFFFF` failures.
+
 ```js
-// via figma_execute — batches of 50
-const LEGACY_MODE_ID = 'REPLACE';
-const entries = [
-  { compVarId: 'VariableID:comp:1', legacyVarId: 'VariableID:legacy:10' },
-  ...
+// via figma_execute
+const LEGACY_MODE_ID  = 'REPLACE_WITH_COMPONENT_LEGACY_MODE_ID';
+const COMP_COLL_ID    = 'REPLACE_WITH_COMPONENT_COLLECTION_ID';
+const LEGACY_COLL_ID  = 'REPLACE_WITH_LEGACY_COLLECTION_ID';
+
+// MAP: [ [component token name, legacy token name], ... ]
+const MAP = [
+  ['button/bg/primary',  'Primary'],
+  ['link/text/default',  'Primary'],
+  // ... all entries from bridge-mapping.json
 ];
 
-for (const { compVarId, legacyVarId } of entries) {
-  const v = figma.variables.getVariableById(compVarId);
-  v.setValueForMode(LEGACY_MODE_ID, { type: 'VARIABLE_ALIAS', id: legacyVarId });
+const allVars = await figma.variables.getLocalVariablesAsync();
+
+// Snapshot prior variables BEFORE the new component collection was created
+// to avoid resolving alias targets to the newly created component variables.
+const priorByName = {};   // semantic + legacy collections
+const compByName  = {};   // component collection only
+const legacyByName = {};  // legacy collection only
+
+for (const v of allVars) {
+  if (v.variableCollectionId === COMP_COLL_ID) {
+    compByName[v.name] = v;
+  } else {
+    priorByName[v.name] = v;
+    if (v.variableCollectionId === LEGACY_COLL_ID) legacyByName[v.name] = v;
+  }
 }
-return `Set ${entries.length} Legacy aliases`;
+
+let set = 0;
+const errors = [];
+for (const [compName, legName] of MAP) {
+  const compVar   = compByName[compName];
+  const legacyVar = legacyByName[legName];
+  if (!compVar)   { errors.push(`Component token not found: ${compName}`); continue; }
+  if (!legacyVar) { errors.push(`Legacy token not found: ${legName}`);     continue; }
+  compVar.setValueForMode(LEGACY_MODE_ID, { type: 'VARIABLE_ALIAS', id: legacyVar.id });
+  set++;
+}
+return { set, errors };
 ```
 
 Legacy mode aliases terminate at the legacy collection. The semantic layer (Tokens collection, light/dark modes) is not involved and cannot affect these values.
 
 #### 6c. Set Light and Dark mode aliases → semantic tokens
 
-Unlike Option A, there are no hex placeholders. Each component token's Light/Dark value is the correct semantic token for that component's context, as determined in Stage 4:
+**Pre-flight check:** Before running, count how many component token Value/Light/Dark mode entries are already correctly aliased to the Tokens collection:
 
 ```js
-// via figma_execute — batches of 50
-// Light and Dark both point to the same semantic token;
-// the Tokens collection's own light/dark modes handle the actual value difference.
-const entries = [
-  { compVarId: 'VariableID:comp:1', semanticVarId: 'VariableID:tokens:action' },  // button/bg/primary → color/surface/action
-  { compVarId: 'VariableID:comp:2', semanticVarId: 'VariableID:tokens:brand'  },  // callout/bg/primary → color/surface/brand
-  ...
-];
+// via figma_execute — pre-flight check only, no writes
+const COMP_COLL_ID   = 'REPLACE_WITH_COMPONENT_COLLECTION_ID';
+const TOKENS_COLL_ID = 'REPLACE_WITH_TOKENS_COLLECTION_ID';
+const LEGACY_MODE_ID = 'REPLACE_WITH_COMPONENT_LEGACY_MODE_ID';
 
-// Set for all non-legacy modes on the component collection
-const compCollection = figma.variables.getVariableCollectionById('<component-collection-id>');
-const nonLegacyModes = compCollection.modes.filter(m => m.name !== 'Legacy');
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
 
-for (const { compVarId, semanticVarId } of entries) {
-  const v = figma.variables.getVariableById(compVarId);
+const compColl = allColls.find(c => c.id === COMP_COLL_ID);
+const nonLegacyModes = compColl.modes.filter(m => m.modeId !== LEGACY_MODE_ID);
+
+const compVars = allVars.filter(v => v.variableCollectionId === COMP_COLL_ID);
+const tokensVarIds = new Set(
+  allVars.filter(v => v.variableCollectionId === TOKENS_COLL_ID).map(v => v.id)
+);
+
+let alreadySet = 0;
+let missing = 0;
+const gaps = [];
+
+for (const v of compVars) {
   for (const mode of nonLegacyModes) {
-    v.setValueForMode(mode.modeId, { type: 'VARIABLE_ALIAS', id: semanticVarId });
+    const val = v.valuesByMode[mode.modeId];
+    if (val?.type === 'VARIABLE_ALIAS' && tokensVarIds.has(val.id)) {
+      alreadySet++;
+    } else {
+      missing++;
+      gaps.push({ token: v.name, mode: mode.name });
+    }
   }
 }
-return `Set ${entries.length} semantic aliases`;
+
+return { alreadySet, missing, sample: gaps.slice(0, 20) };
+```
+
+Only write aliases for the tokens reported as missing or incorrect. Do not overwrite already-correct values.
+
+```js
+// via figma_execute — write only missing aliases
+const COMP_COLL_ID   = 'REPLACE_WITH_COMPONENT_COLLECTION_ID';
+const TOKENS_COLL_ID = 'REPLACE_WITH_TOKENS_COLLECTION_ID';
+const LEGACY_MODE_ID = 'REPLACE_WITH_COMPONENT_LEGACY_MODE_ID';
+
+// MAP: [ [component token name, semantic token name], ... ]
+// Include ONLY the tokens identified as missing in the pre-flight check
+const MAP = [
+  ['button/bg/primary',  'color/surface/action'],
+  ['callout/bg/primary', 'color/surface/brand'],
+  // ...
+];
+
+const allVars = await figma.variables.getLocalVariablesAsync();
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+
+const compColl   = allColls.find(c => c.id === COMP_COLL_ID);
+const nonLegacyModes = compColl.modes.filter(m => m.modeId !== LEGACY_MODE_ID);
+
+const compByName    = {};
+const semanticByName = {};
+for (const v of allVars) {
+  if (v.variableCollectionId === COMP_COLL_ID)   compByName[v.name]    = v;
+  if (v.variableCollectionId === TOKENS_COLL_ID) semanticByName[v.name] = v;
+}
+
+let set = 0;
+const errors = [];
+for (const [compName, semanticName] of MAP) {
+  const compVar     = compByName[compName];
+  const semanticVar = semanticByName[semanticName];
+  if (!compVar)     { errors.push(`Component token not found: ${compName}`);   continue; }
+  if (!semanticVar) { errors.push(`Semantic token not found: ${semanticName}`); continue; }
+  for (const mode of nonLegacyModes) {
+    compVar.setValueForMode(mode.modeId, { type: 'VARIABLE_ALIAS', id: semanticVar.id });
+  }
+  set++;
+}
+return { set, errors };
 ```
 
 #### 6d. Save bridge state
@@ -402,34 +608,16 @@ return `Set ${entries.length} semantic aliases`;
 
 ## Stage 7 — Rebind components
 
-Rebind component layers from legacy token IDs to new token IDs. Work one component category at a time and validate visually after each.
-
-Use `scripts/rebind_layer.js` via `figma_execute`. Build the `mapping` object (`{ oldVarId: newVarId }`) from `bridge-mapping.json` and `bridge-state.json`.
-
-Before rebinding each category, ensure the component's parent frame has Legacy mode applied:
-
-```js
-// Option A: apply Legacy mode on the Tokens collection
-const frame = figma.getNodeById('<frame-or-page-id>');
-const tokensCollection = figma.variables.getVariableCollectionById('<tokens-collection-id>');
-frame.setExplicitVariableModeForCollection(tokensCollection, '<legacy-mode-id>');
-
-// Option B: apply Legacy mode on the Component collection
-const frame = figma.getNodeById('<frame-or-page-id>');
-const compCollection = figma.variables.getVariableCollectionById('<component-collection-id>');
-frame.setExplicitVariableModeForCollection(compCollection, '<component-legacy-mode-id>');
-```
-
-Per category:
-1. Run `rebind_layer.js` for each component set in the category
-2. Capture a screenshot with `figma_take_screenshot`
-3. Confirm visuals are unchanged before moving to the next category
+> **Hand off to `token-migrate`**
+> Use the **token-migrate** skill for this step. Pass it `bridge-mapping.json` as the source of old→new variable ID pairs. `token-migrate` handles layer scanning, batched rebinding, and visual validation per component category.
+>
+> `token-bridge` is complete once the bridge variables are created and aliases are set (Stage 6). Component layer rebinding is `token-migrate`'s responsibility.
 
 ---
 
 ## Stage 8 — Validate
 
-After all components are rebound:
+After all components are rebound (via `token-migrate`):
 
 1. Switch the entire library page to Legacy mode; confirm everything looks identical to the original
 2. Run `token-audit` to check for any remaining direct legacy-token bindings on component layers
@@ -453,20 +641,31 @@ Legacy mode visual check:     ✓ identical
 
 ### Option A
 
-Replace hex placeholders in Light/Dark modes with real aliases to new semantic tokens (which in turn alias to new primitives via the Tokens collection):
+Replace hex placeholders in Light/Dark modes with real aliases to new semantic tokens:
 
 ```js
-const entries = [
-  { varId: 'VariableID:new:1', semanticAlias: 'VariableID:tokens:action' }
-];
+// via figma_execute
+const TOKENS_COLL_ID = 'REPLACE_WITH_TOKENS_COLLECTION_ID';
 const LIGHT_MODE = '<light-mode-id>';
 const DARK_MODE  = '<dark-mode-id>';
 
+// MAP: [ [new token variable ID, semantic alias variable ID], ... ]
+const entries = [
+  { varId: 'VariableID:new:1', semanticAlias: 'VariableID:tokens:action' }
+];
+
+const allVars = await figma.variables.getLocalVariablesAsync();
+const varsById = Object.fromEntries(allVars.map(v => [v.id, v]));
+
+let updated = 0;
 for (const { varId, semanticAlias } of entries) {
-  const v = figma.variables.getVariableById(varId);
+  const v = varsById[varId];
+  if (!v) continue;
   v.setValueForMode(LIGHT_MODE, { type: 'VARIABLE_ALIAS', id: semanticAlias });
   v.setValueForMode(DARK_MODE,  { type: 'VARIABLE_ALIAS', id: semanticAlias });
+  updated++;
 }
+return { updated };
 ```
 
 After each category: switch to Light mode, take a screenshot, compare against Legacy mode, confirm.
@@ -485,14 +684,18 @@ Only after all tokens are graduated and all visual reviews pass:
 
 **Option A:**
 ```js
-const collection = figma.variables.getVariableCollectionById('<tokens-collection-id>');
+// via figma_execute
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+const collection = allColls.find(c => c.id === '<tokens-collection-id>');
 collection.removeMode('<legacy-mode-id>');
 ```
 
 **Option B:**
 ```js
+// via figma_execute
 // Delete the entire Component collection — removes Legacy mode and all component tokens
-const collection = figma.variables.getVariableCollectionById('<component-collection-id>');
+const allColls = await figma.variables.getLocalVariableCollectionsAsync();
+const collection = allColls.find(c => c.id === '<component-collection-id>');
 collection.remove();
 ```
 
@@ -503,7 +706,7 @@ collection.remove();
 ## Notes on risk
 
 - Stages 1–6 are non-destructive: the legacy collection and Tokens collection are not modified (Option A adds a mode and new variables; Option B creates a new collection)
-- Stage 7 (rebinding) changes component layer bindings — work on a branch or duplicate file
+- Stage 7 (rebinding via `token-migrate`) changes component layer bindings — work on a branch or duplicate file
 - Stage 9 removal is the only irreversible operation; run it last and only after full validation
 - The legacy collection is never modified at any stage
 - Never set raw hex values on component layers — always alias through the bridge variables

@@ -24,7 +24,7 @@ const options = {
 
 // ─── Build variable ID → name lookup ────────────────────────────────────────
 
-const allVars = figma.variables.getLocalVariables();
+const allVars = await figma.variables.getLocalVariablesAsync();
 const varLookup = Object.fromEntries(
   allVars.map(v => [v.id, { name: v.name, collectionId: v.variableCollectionId }])
 );
