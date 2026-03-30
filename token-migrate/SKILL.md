@@ -16,6 +16,10 @@ Migrates an existing token system (or raw values) to the 3-tier model. Works in 
 - A Figma file connected via the MCP
 - The new tokens should already exist in Figma (run `token-generate` + `token-push` first for each category)
 
+### Figma Bridge files
+
+If the file previously used Figma Bridge, a "Bridge" variable collection will be present. Bridge variables alias into the old semantic layer. This is an advantage: the existing binding tells you exactly which semantic concept the layer was using, which makes mapping to the new component token more deterministic. The goal is re-plumbing — swapping the variable binding to the new component token — without changing any resolved values or visuals.
+
 ---
 
 ## Stage 1 — Inventory the old system
@@ -49,22 +53,39 @@ Use `figma_get_styles` to find:
 - Text styles
 - Effect styles (shadows)
 
-### 1c. Find hardcoded values
+### 1c. Detect Figma Bridge variables
+
+Check whether a "Bridge" collection exists:
+
+```
+figma_get_variables(fileUrl: <current file>, format: "filtered", collection: "Bridge", verbosity: "standard")
+```
+
+If Bridge variables are present, for each one record:
+- Bridge variable name (e.g. `bridge/button/background`)
+- What it aliases to (the old semantic variable, e.g. `semantic/color/surface/brand`)
+- Which layers use it
+
+This alias chain is a strong signal for Stage 2 mapping. A layer bound to a Bridge variable already has a known semantic intent — you just need to find the new component token that matches.
+
+### 1d. Find hardcoded values
 
 If the old system used raw hex values applied directly (no styles or variables), use `figma_lint_design` or `figma_audit_design_system` to surface layers with hardcoded fills, strokes, and text colors.
 
-### 1d. Produce the inventory
+### 1e. Produce the inventory
 
-Present a complete inventory table:
+Present a complete inventory table. Flag Bridge variables in their own group — they carry the most mapping confidence:
 
 ```
-Old token / value              | Type   | Current value   | Used on N layers
--------------------------------|--------|-----------------|------------------
-styles/Primary                 | color  | #3B82F6         | 47 layers
-styles/Text Default            | color  | #111827         | 203 layers
-styles/Background              | color  | #FFFFFF         | 89 layers
-vars/brand-color               | color  | → Primary       | 12 layers
-#E5E7EB (hardcoded)            | color  | #E5E7EB         | 8 layers
+Old token / value                      | Type   | Current value   | Used on N layers
+---------------------------------------|--------|-----------------|------------------
+[BRIDGE] bridge/button/background      | color  | → semantic/...  | 23 layers
+[BRIDGE] bridge/button/label           | color  | → semantic/...  | 23 layers
+styles/Primary                         | color  | #3B82F6         | 47 layers
+styles/Text Default                    | color  | #111827         | 203 layers
+styles/Background                      | color  | #FFFFFF         | 89 layers
+vars/brand-color                       | color  | → Primary       | 12 layers
+#E5E7EB (hardcoded)                    | color  | #E5E7EB         | 8 layers
 ```
 
 ---
@@ -89,9 +110,16 @@ styles/Shadow Small            | KEEP AS STYLE                     | —        
 
 **Confidence levels:**
 - **High** — value matches exactly and usage context is unambiguous
+- **High (Bridge-confirmed)** — layer was using a Bridge variable; the Bridge → semantic alias chain confirms the intent. Use the semantic token name to look up the correct new component token. The resolved value must be identical before and after — if it isn't, something is wrong with the new token, not the mapping.
 - **Medium** — value matches but usage context suggests this may apply differently in some layers
 - **Low** — best guess; manual review recommended after migration
 - **No match** — no appropriate new token exists; either generate a new one or keep the old
+
+**Bridge-confirmed mapping process:** For each Bridge variable, follow the alias chain:
+1. Bridge var (e.g. `bridge/button/background`) → aliases to old semantic var (e.g. `semantic/color/surface/brand`)
+2. Find the new component token whose semantic alias matches (e.g. `component/button/background` → `color/surface/brand`)
+3. Confirm the resolved hex value is unchanged
+4. Mark as High (Bridge-confirmed) in the mapping table
 
 **Context-dependent mappings:** Some old tokens were overloaded — the same style used for backgrounds in some places and text in others. Flag these explicitly. They may require layer-by-layer decisions.
 
@@ -126,6 +154,8 @@ figma_update_variable(
 ```
 
 This preserves any layers already using the old variable — they now inherit the new token's value through the alias chain.
+
+**For Bridge variables:** Do not remap the Bridge variable itself. Instead, rebind the layers that reference the Bridge variable directly to the new component token. This removes the Bridge intermediary and establishes a clean direct binding. The resolved value must not change — verify this before and after with `figma_get_token_values` or a screenshot comparison.
 
 ### 3b. Remap Figma styles to variables
 
@@ -178,12 +208,15 @@ Text styles cannot be directly replaced by variables (Figma limitation). Options
 
 After applying:
 
-1. Run `token-audit` to check for any remaining hardcoded values or broken aliases
-2. Spot-check 5–10 layers across different component types to verify tokens applied correctly
-3. Switch between light and dark mode to confirm tokens respond correctly
-4. Check for any layers that still reference old styles or variables
+1. **No-visual-change check** — take a screenshot before and after Stage 3. The output must be pixel-identical. Any visual difference means a token resolved to the wrong value and must be investigated before continuing.
+2. Run `token-audit` to check for any remaining hardcoded values or broken aliases
+3. Spot-check 5–10 layers across different component types to verify tokens applied correctly
+4. Switch between light and dark mode to confirm tokens respond correctly
+5. Check for any layers that still reference old Bridge variables or styles
 
-Report: how many layers were migrated, what's still using old values, and what requires manual attention.
+For Bridge-migrated layers specifically: confirm the new component token binding is in place and the Bridge variable is no longer referenced. The Bridge collection can be removed once all references are gone.
+
+Report: how many layers were migrated (broken down by Bridge-confirmed vs. other), what's still using old values, and what requires manual attention.
 
 ---
 
