@@ -99,10 +99,13 @@ adaptivity axes and record them as the start of the model.
 - **Known library?** If from a well-known library (shadcn, MUI, Radix, Headless
   UI), skip source extraction and reference the library's own API docs. Focus
   effort on token mapping and team-specific usage rules.
-- **Environment.** Check the component directory for co-located stories
-  (`[Name].stories.{tsx,ts,js,jsx}`) and for a token file. Note a predecessor if
-  the user names one or the source hints at one (deprecated re-exports, a
-  predecessor import path). These set lineage and output target.
+- **Environment.** Detect co-located stories with
+  `scripts/detect_stories.py <component-path>` — it returns
+  `{ detected, storiesFile, exports[] }`, the story export list the render phase
+  needs (falls back to `detected: false` when there are none). Also check for a
+  token file. Note a predecessor if the user names one or the source hints at one
+  (deprecated re-exports, a predecessor import path). These set lineage and
+  output target.
 - **Conformance target.** Default to Level 2 (Complete) unless asked for more.
   Omit sections that don't fit the component.
 - **Name.** Extract the canonical name and any aliases.
@@ -164,12 +167,19 @@ gate, not a side effect: the spec must not assert what it hasn't grounded.
    system's convention. No token system at all → `[no token system — raw value: X]`
    and queue a Phase 7 question.
 
-**Contrast resolution:** for every foreground/background pair, walk the `var()`
-chain from semantic → primitive → hex, compute the WCAG ratio, and record the
-ratio plus pass/fail. A chain that doesn't resolve is recorded as
-`[unresolved — chain ends at --token]` and queued as a Phase 7 blocker question.
-Never emit a blanket `[verify against token values]` when a token file is present.
-If no token file exists, queue a blocker question per pair.
+**Contrast resolution:** for every foreground/background pair, resolve it with
+`scripts/resolve_contrast.py --tokens <file> --pair <fg-token> <bg-token>`. The
+script walks the `var()` chain (semantic → primitive → value), computes the WCAG
+2.1 ratio, and returns pass/fail at each threshold (AA text, AA large, AA UI,
+AAA). Record the ratio and ✅/❌ from its output. When it returns
+`resolved: false`, it names the token where the chain stopped — render that as
+its `[unresolved — chain ends at --token]` marker and queue a Phase 7 blocker
+question. Never emit a blanket `[verify against token values]` when a token file
+is present. If no token file exists, queue a blocker question per pair.
+
+> The script accepts CSS custom-property files and flat/DTCG JSON token maps,
+> and bare token names (`content-primary`, not `--content-primary`). Pass several
+> pairs at once by repeating `--pair`.
 
 If the user provides a Figma file or token JSON separately, treat it as
 authoritative over values found in code.
@@ -328,3 +338,10 @@ No preamble, no process summary. Spec and questions only.
 - `references/component-spec-template.md` — Load before rendering a component spec
 - `references/pattern-spec-template.md` — Load before rendering a pattern spec
 - `references/research-targets.md` — Component-class-specific research URLs and notes
+
+## Scripts
+
+- `scripts/detect_stories.py <component-path>` — Frame phase: find co-located
+  stories and extract named exports (the `storybookContext`)
+- `scripts/resolve_contrast.py --tokens <file> --pair <fg> <bg>` — Ground phase:
+  resolve a contrast pair's token chain and compute its WCAG ratio
