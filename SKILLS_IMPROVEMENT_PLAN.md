@@ -1,174 +1,186 @@
 # Skills Improvement Plan
 
-Plan to address the 15 open issues against `spec-generator` and `doc-generator`.
-Derived from reading every open issue plus both `SKILL.md` files and
-`spec-generator/references/component-spec-template.md`.
+A comprehensive redesign of `spec-generator` and `doc-generator`, derived from
+the 15 open issues — but organized around the problems they reveal, not the
+solutions they prescribe. The issues are treated as evidence of what's broken,
+not as a spec to implement literally.
 
-## Issue landscape
+## The reframe
 
-| Cluster | Issues | Skill(s) |
+The 15 issues collapse into 5 root problems:
+
+| # | Root problem | Evidenced by |
 |---|---|---|
-| A — Storybook / MDX awareness | #37, #38, #39, #48 | spec + doc |
-| B — API & composition modeling | #40, #42, #45, #46 | spec |
-| C — New sections & correctness | #41, #43, #44, #49 | spec |
-| D — Prose & structure quality pass | #47, #50, #51 | spec |
+| 1 | No model of composition/hierarchy — every component treated as a flat standalone leaf | #40, #42, #45, #46 |
+| 2 | Blind to output environment — emits dead static markdown wherever it lands | #37, #38, #39, #48 |
+| 3 | Asserts unverified facts — placeholders that look complete but aren't | #43 |
+| 4 | Serves authoring, not the reader's job — no support for review sign-off or migration | #41, #44, #49 |
+| 5 | Optimizes for coverage, not signal — restated tables, thin sections, verbose prose | #47, #50, #51 |
 
-13 of 15 issues touch `spec-generator`. #37 and #39 touch `doc-generator`.
+They share one cause: **the skill renders a document directly from raw
+extraction, through a fixed pipeline, into a uniform exhaustive format —
+regardless of what the component is, where the doc will live, or who reads it.**
 
-## Two cross-cutting decisions to make first
+## The architecture: model, then render
 
-These block clean execution of the clusters. Resolve them before writing any
-skill changes, because nearly every issue depends on them.
+Introduce an explicit intermediate **component model**, then render it adaptively.
+Today extraction flows straight into prose. Instead, Phases 1–4 build a model;
+Phases 5–6 render and edit it.
 
-### 1. Lock the canonical section numbering
+The model captures, for each component:
+- **Parts** with token bindings and a significance flag (carries tokens? manages
+  state? conditional? structurally load-bearing?) — drives anatomy depth.
+- **Props, classified**: consumer-settable / derived-internal / composition slot.
+- **Composition edges**: which props/statics resolve to other named components,
+  and whether those have their own spec.
+- **Resolved values**: token chains walked to concrete values; contrast computed;
+  unresolved chains recorded with *where* they stopped.
+- **Lineage**: predecessor component, if this replaces/extends one.
+- **Environment**: co-located stories + their exports; token file present?; output
+  target (`.md` vs `.mdx`).
 
-The issues reference conflicting section numbers, and two of them add new
-sections. Today the template is:
+Everything renders from this model. That's what makes the result one coherent
+system instead of fifteen patches.
 
-`§0 Metadata · §1 Overview · §2 Anatomy · §3 Variants · §4 States · §5 Design
-Specs · §6 API · §7 Imports · §8 Interactions · §9 Accessibility · §10 Content ·
-§11 Usage Guidelines · §12 Related`
+### Three axes of adaptivity
 
-Proposed canonical order after all issues land:
+The renderer adapts along three axes, which is precisely what the issues are
+groping toward:
 
-`§0 What's new (migration delta, conditional — #41) · §1 Metadata · §2 Overview
-· §3 Anatomy · §4 Variants · §5 States · §6 Design Specs · §7 API · §8 Imports ·
-§9 Interactions · §10 Accessibility · §11 Content · §12 Acceptance checklist
-(#44/#49) · §13 Usage Guidelines · §14 Related`
+1. **Adapt to the component's nature** (leaf vs composite/layout; standalone vs
+   member of a family). Leaf components get full part-by-part anatomy and a flat
+   API. Composite components get selective anatomy (significant parts only),
+   split API, and *references* to the components they compose — never inlined
+   child tables. → resolves problem 1; absorbs #40, #42, #45, #46.
 
-Open question for the user: keep "What's new" as a renumbering-causing `§0`, or
-make it an un-numbered lead block so the rest of the template keeps its current
-numbers? Recommendation: un-numbered lead block titled **"What's new"** so we do
-not renumber the whole template (and break every cross-reference in existing
-specs) just to satisfy one conditional section. Same for Acceptance checklist —
-place it by name, not by fighting over a number.
+2. **Adapt to the output environment.** If stories are co-located, render `.mdx`
+   with a live preamble, embed canvases against matched exports, prefer
+   `<ArgTypes>` over a hand-authored consumer-prop table, and collapse reference
+   material into `<details>`. No stories → plain `.md`, identical content. If a
+   token file is present, resolve from it. → resolves problem 2; absorbs #37, #38,
+   #39, #48.
 
-### 2. Add a "Plan & confirm" phase to spec-generator
+3. **Adapt to the reader's job.** A spec is a build guide *and* a handoff
+   artifact. Render a migration delta when lineage exists, and a derived,
+   testable acceptance checklist for sign-off. → resolves problem 4; absorbs #41,
+   #44, #49.
 
-#40, #42, and #50 all require the skill to "surface a decision to the user in
-the Phase 3 plan for confirmation." `spec-generator` has no such phase — it goes
-straight from Research (Phase 4) to Write (Phase 5). 
+### Two disciplines applied across every section
 
-Proposal: insert **Phase 4.5 — Plan & confirm** (between Research and Write) that
-emits a short plan: component class, detected composition slots, proposed section
-consolidation, and any derived-vs-consumer prop classifications — then waits for
-confirmation or proceeds with defaults if the user says "just go." This single
-addition unblocks the "surface for confirmation" acceptance criteria across the
-whole B cluster.
+4. **Grounding/verification.** Never assert what wasn't verified, never fake
+   completeness. Resolve what the inputs allow (token chains, contrast ratios);
+   for what genuinely can't resolve, emit a *specific, actionable* marker naming
+   where resolution stopped, and raise it as a question. A blanket
+   `[verify against token values]` — a placeholder masquerading as done work —
+   is banned whenever the means to verify exist. → resolves problem 3; absorbs
+   #43, and generalizes it to every resolvable value, not just contrast.
 
-Also add a **`componentClass` output (`leaf` | `composite`) to Phase 1** (#40).
-This signal is consumed by #40, #42, #45, and #46, so it belongs in Phase 1 once.
+5. **Editorial restraint.** The model is rendered for a reader who scans. Lead
+   with the densest format (table over prose), never restate across formats,
+   scale depth to the component, and push reference material below the primary
+   read. This is a first-class render phase, not a set of inline rules. →
+   resolves problem 5; absorbs #47, #50, #51, and reinforces #40/#48.
 
-## Workstreams, in recommended execution order
+## Redesigned pipeline
 
-### Workstream 1 — Storybook detection foundation (#37)
+The current flat pipeline (Classify → Analyse → Tokens → Research → Write →
+Questions) has no place to decide the document's shape, no verification gate, and
+fuses writing with editing. Replace it with a model-building front half and a
+rendering back half:
 
-Prerequisite for #38, #39, #48. Smallest, highest-leverage change.
+1. **Frame.** Classify the component's nature, detect the environment (stories,
+   token file, predecessor), and from those decide the document's shape and depth.
+   This is the old "Classify," widened to set every adaptivity axis up front.
+2. **Model.** Extract source into the structured model: parts + significance,
+   props classified by kind, composition edges, states. Detect composition
+   boundaries here (co-located child files, `Parent.Child` statics, "compose
+   with" hints).
+3. **Ground.** Resolve token chains to values; compute contrast; record
+   unresolved chains with their stopping point. Verification is its own gate, not
+   a side effect of token mapping.
+4. **Research.** Industry standards, in parallel — unchanged in spirit.
+5. **Render.** Fill the template from the model, adapting format to environment
+   and depth to component class.
+6. **Edit.** A dedicated self-review pass: collapse restatement, consolidate thin
+   sections, tighten prose, demote reference material. The renderer writes;
+   this phase cuts.
+7. **Question.** Surface only what changes the doc, with verification gaps
+   (problem 3) prioritized.
 
-- Add a **Storybook detection step** to both skills: scan the component dir for
-  `[Name].stories.{tsx,ts,js,jsx}`, regex out named exports, produce a
-  `storybookContext { detected, storiesFile, exports[] }` object.
-- Non-blocking: parse failure or no file ⇒ `{ detected: false }` ⇒ `.md` fallback.
-- Land this alone first; it has no user-visible output change on its own.
+Naming the phases by what they *do* — rather than numbering them and bolting on
+"Phase 4.5" — keeps the issues' "surface this for confirmation" intent (it lands
+in Frame's output and the Question phase) without importing their phase numbers.
 
-### Workstream 2 — MDX output (#38, #39, #48)
+## Redesigned template
 
-Depends on WS1. Do spec and doc in parallel after detection exists.
+The current template is a flat list of ~13 equally-weighted numbered sections,
+which is the structural cause of problems 1 and 5. Reorganize around **progressive
+disclosure** and **the reader's path**, in three tiers:
 
-- **#38 (spec):** when `detected`, emit `.mdx` with `Meta name="Design Spec"`
-  preamble; inject `<Canvas of={Stories.X}>` after variant/state sections whose
-  normalized heading substring-matches an export. Never emit a Canvas for an
-  unknown export. Fallback to `.md`.
-- **#39 (doc):** same idea, `name="Usage"`, but **selective** canvases (lead
-  canvas + per-variant only; none in when-to-use / copy / a11y prose). Output
-  `.mdx`.
-- **#48 (spec, advanced):** after #38, add `<ArgTypes>` for §7.1 consumer props,
-  `<details>` collapsible appendices, JSX token-comparison blocks (tokens only,
-  no raw values), `<Source>` usage snippets. Must degrade gracefully in `.md`.
-  Note: #48 depends on the API split (#42) for the "consumer props only" filter,
-  so sequence #42 before #48's ArgTypes piece.
+- **Orient** (always a tight read): what changed since the predecessor (only when
+  lineage exists), what it is and when to use it, anatomy at a depth matched to
+  the component class.
+- **Specify** (the contract): variants, states, design baseline, API split into
+  consumer / derived / composition-slots, interactions, accessibility, content.
+  Composition slots reference child specs; they never inline them.
+- **Verify & relate** (the handoff): acceptance checklist (derived, grouped,
+  testable), usage guidelines, related components. Bulky reference material
+  (full subcomponent tables, exhaustive token chains) lives here, collapsed when
+  the environment supports it.
 
-### Workstream 3 — API & composition modeling (#40, #42, #45, #46)
+Section *numbers* become an implementation detail of the template, not a contract
+the issues negotiate over. New material (migration delta, acceptance checklist)
+is placed where it serves the reader and is omitted entirely when not applicable
+— not slotted at a contested integer. Same restructuring principle applies to
+`doc-generator`, scoped to its designer audience (it already has a length rule
+and a no-anatomy rule; it gains environment adaptivity and the editorial pass).
 
-Tightly coupled; shares detection logic and the `componentClass` signal. Build
-the detection once, then the three consumers.
+## Issue coverage check
 
-1. **Detection (Phase 2 + Phase 1):** classify `componentClass`; detect
-   composition boundaries (co-located `Child.tsx`, `Parent.Child = X` statics,
-   "compose with `<X>`" doc hints); flag derived props (computed from ≥2 props,
-   set by context, absent from argTypes). Surface all of this in the new Phase 4.5.
-2. **#42 — split §API** into `7.1 Consumer props`, `7.2 Derived & internal`,
-   `7.3 Composition slots` (omit empty subsections; no prop in two places).
-3. **#45 — reference child specs** instead of inlining: each composition slot
-   emits a reference/stub line, never the child's prop table.
-4. **#46 — parent documents child *impact* only**: coupling summary
-   (down/up/structural) + grep-able `*(stub — spec not yet written)*` marker.
-5. **#40 — anatomy depth by class**: leaf ⇒ full part table (unchanged);
-   composite ⇒ selective anatomy + omission note; slots reference child spec.
+Every issue is resolved by a principle above, not a dedicated patch:
 
-These four should land as one sequenced PR series since they edit the same
-template sections and Phase 2 detection block. #42 → #45 → #46 → #40 order.
+| Issue | Resolved by |
+|---|---|
+| #37 stories detection | Frame phase — environment detection (axis 2) |
+| #38 spec MDX/Canvas | Render adapts to environment (axis 2) |
+| #39 doc MDX/Canvas | Render adapts to environment, doc-scoped (axis 2) |
+| #48 ArgTypes/details/token-compare | Render adapts to environment + progressive disclosure (axis 2, tier 3) |
+| #40 anatomy depth | Model significance flag + adapt to nature (axis 1) |
+| #42 API split | Model prop classification (axis 1) |
+| #45 reference child specs | Model composition edges (axis 1) |
+| #46 parent documents child impact | Composition edges carry coupling, not internals (axis 1) |
+| #43 contrast resolution | Grounding discipline, generalized (discipline 4) |
+| #41 migration delta | Lineage in model + adapt to reader (axis 3) |
+| #44 acceptance checklist | Adapt to reader's job: handoff (axis 3) |
+| #49 grouped checklist | Same, rendered grouped from the model (axis 3) |
+| #47 prose/table duplication | Editorial pass (discipline 5) |
+| #50 consolidate thin sections | Editorial pass + progressive disclosure (discipline 5) |
+| #51 terse prose | Editorial pass (discipline 5) |
 
-### Workstream 4 — New sections & correctness (#41, #43, #44, #49)
+## Sequencing
 
-Mostly independent of WS3; can run in parallel.
+Build the model spine first; the adaptive renders depend on it.
 
-- **#43 (bug, do early):** resolve contrast pairs from the token file in Phase 3
-  — walk the `var()` chain to hex, compute WCAG ratio, fill ✅/❌. Replace the
-  blanket `[verify against token values]` with `[unresolved — chain ends at X]`
-  + a Phase 6 blocker question. Highest correctness value; ship first in this WS.
-- **#44:** add the Acceptance checklist section, items *derived* from spec
-  content (variants/states/motion/ARIA/deprecated props), binary pass/fail,
-  design-correctness scope only.
-- **#49:** group that checklist by functional area (Layout / Header / Motion /
-  Accessibility / Composition / Content / Other); omit empty groups. Depends on
-  #44 — same PR or immediately after.
-- **#41:** conditional "What's new" lead block when a predecessor is detected
-  (deprecated re-exports, predecessor import path, or user states it). Add the
-  "what does this replace?" question to the new Phase 4.5 plan/interview.
+1. **Pipeline + model + template skeleton.** Reframe phases, define the model,
+   restructure the template into the three tiers. Everything else renders from
+   here. (Foundational; nothing ships meaningfully before it.)
+2. **Grounding discipline** (#43 generalized) and **environment detection** (#37).
+   Both are self-contained and unblock later work; high correctness value.
+3. **Composition-aware render** (#40, #42, #45, #46) and **MDX render** (#38, #39,
+   #48) — independent of each other, parallelizable, both depend on 1–2.
+4. **Reader-job render** (#41, #44, #49).
+5. **Editorial pass** (#47, #50, #51) — last, because it operates on the finished
+   output of everything above. Done first, it would need re-tuning after each
+   later change.
 
-### Workstream 5 — Prose & structure quality pass (#47, #50, #51)
+## Judgement calls made (flag if you disagree)
 
-All three rewrite Phase 5 writing rules and add a Phase 5 self-review. Do them
-together to avoid three conflicting edits to the same phase.
-
-- **#47:** lead with tables, no prose that restates a table; ≤1 sentence
-  pre-table prose.
-- **#50:** consolidate thin (≤15-line) adjacent sections under `##` parent +
-  `###` subsections; never consolidate API or a full Accessibility section.
-- **#51:** terse sentence style — active voice, ≤20 words, ban "in order to",
-  "the following table", "it is important", "this means"; one-sentence questions.
-- Implement as a single **Phase 5 self-review checklist** the skill runs before
-  emitting, since #47/#50/#51 are all "scan output, then fix" passes.
-
-## Recommended sequencing
-
-```
-Milestone 0 (decisions):  section numbering + Phase 4.5 + componentClass signal
-Milestone 1:              #37 (detection)              → #43 (contrast bug)
-Milestone 2:              #38, #39 (MDX)               #42→#45→#46→#40 (composition)
-Milestone 3:              #48 (MDX interactive)        #44→#49 (checklist), #41 (what's new)
-Milestone 4:              #47+#50+#51 (Phase 5 quality pass) — last, touches final output
-```
-
-Rationale: detection and the contrast bug are foundational/standalone. The
-composition series and the new-sections series are independent and parallelizable.
-The prose/structure pass goes last because it operates on the *finished* output
-of everything else — doing it first would mean re-tuning it after each later
-change.
-
-## Risks & notes
-
-- **Renumbering blast radius.** Any spec already generated by the skill encodes
-  section numbers. Prefer named/un-numbered sections for the two additions to
-  avoid breaking existing cross-references. Confirm with the user.
-- **#44 references a `ds-impl-spec` skill** "that already produces this section."
-  That skill is not in this repo — only `spec-generator`/`doc-generator` exist.
-  Treat #44 as porting the pattern into `spec-generator`, not reusing code.
-- **Phase-number drift.** Issues cite phase numbers (`Phase 2 interview`,
-  `Phase 3 plan`) that don't match the current spec-generator phases. The new
-  Phase 4.5 reconciles most of these; each issue's "Phase N" references should be
-  re-mapped to the actual phases during implementation, not copied literally.
-- **MDX graceful degradation** is an acceptance criterion in #38/#39/#48 — every
-  interactive element needs a tested `.md` fallback path.
-```
+- **Section numbers are demoted to a template detail.** New sections are placed
+  by reader value and omitted when N/A, not negotiated onto a specific integer.
+- **Phases are renamed by function**, not extended with fractional numbers. The
+  "surface for confirmation" intent lives in the Frame output and Question phase.
+- **The grounding fix is generalized beyond contrast** (#43) to every resolvable
+  value, since the same placeholder-as-completeness failure applies to token
+  chains generally.
+- **doc-generator gets the same architecture, audience-scoped** — it shares
+  problems 2 and 5, not 1, 3, or 4.
