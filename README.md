@@ -1,10 +1,14 @@
-# Design Token Skills
+# Design System Skills
 
-A set of Claude skills for building and maintaining a 3-tier design token system in Figma. Each skill handles one stage of the pipeline — from initial architecture decisions through to pushing tokens into Figma and exporting to code.
+A set of Claude skills for building, documenting, and maintaining a design system. Skills are grouped by domain — token management, component documentation, and component specs.
+
+> **Repo rename:** This repo was previously `ds-token-skills`. If you have it cloned, the remote URL is the only thing that changes — your local skills and symlinks continue working. Update the remote with `git remote set-url origin <new-url>` after renaming on GitHub.
 
 ---
 
 ## What's included
+
+### Token skills
 
 | Skill | What it does |
 |---|---|
@@ -19,33 +23,22 @@ A set of Claude skills for building and maintaining a 3-tier design token system
 | `token-apply` | Constraint layer for AI-assisted design work — ensures every visual property assigned to a Figma layer comes from the correct token tier. |
 | `token-transfer` | Copies a variable collection from one Figma file to another. Specify which collection(s) to move and how to handle conflicts: overwrite, merge, or add-only. |
 
-Each skill ships with a `scripts/` folder and a `references/token-schema.json`. See [Scripts](#scripts) below.
+### Documentation skills
+
+| Skill | What it does |
+|---|---|
+| `ds-spec-generator` | Generates a filled-out component or pattern spec from source code, design tokens, and industry research. Covers anatomy, API, states, accessibility, and token mapping. Output is for engineers. |
+| `ds-doc-generator` | Generates designer-facing usage documentation for a component or pattern. Covers when to use, variants, do/don'ts, content rules, and accessibility framed as layout decisions. Output is for product designers. |
+
+The two documentation skills are complementary: `ds-spec-generator` answers "how do I build this?", `ds-doc-generator` answers "how do I use this well in my designs?". Run spec first, then pass the spec as input to doc generation.
 
 ---
 
-## The 3-tier model
-
-```
-Primitives          raw values        color/blue/500 → #3B82F6
-    ↓
-Semantic tokens     intent aliases    color/surface/brand → color/blue/500 (light)
-    ↓                                                      → color/blue/600 (dark)
-Component tokens    component aliases button/background/primary/default → color/surface/brand
-    ↓
-Design layers       bound in Figma
-```
-
-- **Primitives** live in the `Primitives` Figma collection, hidden from publishing. Never applied to layers directly.
-- **Semantic tokens** live in the `Tokens` collection with one value per mode (light/dark). These are what get applied to design elements.
-- **Component tokens** are optional — use them for complex, state-heavy components that need to be updated independently.
-
----
-
-## Pipeline
+## Token pipeline
 
 ### New system
 
-Run skills in this order when setting up a system from scratch:
+Run token skills in this order when setting up a system from scratch:
 
 ```
 token-foundation  →  foundation.md
@@ -103,13 +96,68 @@ Two paths depending on how much risk is acceptable:
 
 ---
 
+## The 3-tier model
+
+```
+Primitives          raw values        color/blue/500 → #3B82F6
+    ↓
+Semantic tokens     intent aliases    color/surface/brand → color/blue/500 (light)
+    ↓                                                      → color/blue/600 (dark)
+Component tokens    component aliases button/background/primary/default → color/surface/brand
+    ↓
+Design layers       bound in Figma
+```
+
+- **Primitives** live in the `Primitives` Figma collection, hidden from publishing. Never applied to layers directly.
+- **Semantic tokens** live in the `Tokens` collection with one value per mode (light/dark). These are what get applied to design elements.
+- **Component tokens** are optional — use them for complex, state-heavy components that need to be updated independently.
+
+---
+
+## Documentation pipeline
+
+### Spec first, doc second
+
+```
+source code + tokens
+        ↓
+ds-spec-generator  →  [component]-spec.md
+        ↓
+   [engineer review + questions resolved]
+        ↓
+ds-doc-generator (with spec as input)  →  [component]-usage.md
+```
+
+You can run either skill standalone — the spec isn't required input for the doc generator. But passing the spec gives the doc generator behavioral context without you having to re-explain the component.
+
+### What each output contains
+
+**`[component]-spec.md`** — for engineers:
+- Anatomy with token map
+- Full API (props, events, slots) per platform
+- States with triggers and token changes
+- Keyboard interactions and ARIA (from W3C APG)
+- Design specifications with token identifiers
+- Usage rules with `must`/`should`/`must-not` framing
+- Open questions section
+
+**`[component]-usage.md`** — for product designers:
+- When to use (and when not to)
+- Variant semantics (what each communicates, not how it looks)
+- Designer-controlled states (disabled, loading, error, empty)
+- Do/don't examples for real composition mistakes
+- Content and copy rules
+- Accessibility framed as layout and labeling decisions
+
+---
+
 ## Runtime files
 
-Skills read and write these files in your working directory:
+Token skills read and write these files in your working directory:
 
 | File | Written by | Read by |
 |---|---|---|
-| `foundation.md` | `token-foundation` | all skills |
+| `foundation.md` | `token-foundation` | all token skills |
 | `scaffold-state.json` | `token-figma-scaffold` | `token-push`, `token-apply`, `token-generate`, `token-bridge`, `token-repair-aliases` |
 | `token-proposal-[category].json` | `token-generate` | `token-push`, `token-audit`, `token-apply` |
 | `bridge-mapping.json` | `token-bridge` | `token-bridge` (Stage 7 rebind) |
@@ -117,7 +165,14 @@ Skills read and write these files in your working directory:
 | `transfer-source.json` | `token-transfer` | `token-transfer`, `build_transfer_payload.py` |
 | `transfer-target.json` | `token-transfer` | `token-transfer`, `build_transfer_payload.py` |
 
-Commit these to your repo alongside your Figma file. They are the source of truth the scripts operate on.
+Documentation skills write to:
+
+| File | Written by |
+|---|---|
+| `[component]-spec.md` | `ds-spec-generator` |
+| `[component]-usage.md` | `ds-doc-generator` |
+
+Commit token runtime files to your repo alongside your Figma file — they are the source of truth the scripts operate on. Documentation output files belong wherever your team stores design system docs.
 
 ### Proposal lifecycle
 
@@ -256,7 +311,7 @@ Run this after applying `Legacy` mode to the component's parent frame so the vis
 
 ## Scripts
 
-Every skill includes a `scripts/` folder with five shared Python scripts. They require Python 3.8+ and no third-party dependencies.
+The token skills share five Python scripts in `scripts/`. They require Python 3.8+ and no third-party dependencies.
 
 ### `hex_to_figma.py`
 
@@ -459,8 +514,8 @@ CSS output example:
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/your-org/ds-token-skills.git ~/ds-token-skills
-cd ~/ds-token-skills
+git clone https://github.com/your-org/ds-skills.git ~/ds-skills
+cd ~/ds-skills
 ```
 
 **2. Run the install script**
@@ -469,17 +524,7 @@ cd ~/ds-token-skills
 ./install.sh
 ```
 
-This will symlink the skills into `~/.claude/skills/` and prompt you for your design system project path to copy the Python scripts there.
-
-To skip the prompt and provide the path upfront:
-```bash
-./install.sh --scripts /path/to/your/design-system-project
-```
-
-To install skills only without copying scripts:
-```bash
-./install.sh --skip-scripts
-```
+This symlinks all skills into `~/.claude/skills/` and copies the shared Python scripts and references to `~/.claude/skills/_shared/`.
 
 **3. Reload Claude Code** to pick up the new skills.
 
@@ -489,7 +534,9 @@ To install skills only without copying scripts:
 
 Skills are plain directories containing a `SKILL.md`. They live in `~/.claude/skills/` and are loaded globally by Claude Code — no per-project config needed.
 
-The Python scripts (`scripts/`) run from your project's working directory, so they need to be in your project alongside your token proposal files. They require Python 3.8+ and no third-party dependencies.
+The token Python scripts (`scripts/`) run from your project's working directory, so they need to be in your project alongside your token proposal files. They require Python 3.8+ and no third-party dependencies.
+
+The documentation skills (`ds-spec-generator`, `ds-doc-generator`) carry their reference templates inside their own `references/` folder — no extra setup needed.
 
 **Team / shared setup**
 
@@ -497,9 +544,9 @@ Clone to any shared path your team has read access to, then run `install.sh` on 
 
 ---
 
-## Schema
+## Token schema
 
-All skills share `references/token-schema.json` — a JSON Schema defining the `token-proposal-*.json` format. Key fields:
+All token skills share `references/token-schema.json` — a JSON Schema defining the `token-proposal-*.json` format. Key fields:
 
 ```jsonc
 {

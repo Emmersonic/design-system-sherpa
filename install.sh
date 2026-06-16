@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-# install.sh — Install ds-token-skills into Claude Code
+# install.sh — Install ds-skills into Claude Code
 #
-# Symlinks the skills into ~/.claude/skills/ and copies shared scripts
+# Symlinks all skills into ~/.claude/skills/ and copies shared token scripts
 # and references to ~/.claude/skills/_shared/.
 #
 # Usage:
@@ -12,16 +12,19 @@ set -e
 SKILLS_DIR="$HOME/.claude/skills"
 SHARED_DIR="$SKILLS_DIR/_shared"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_NAMES=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge token-repair-aliases token-transfer)
 
-echo "Installing ds-token-skills..."
+TOKEN_SKILLS=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge token-repair-aliases token-transfer)
+DOC_SKILLS=(ds-doc-generator ds-spec-generator)
+ALL_SKILLS=("${TOKEN_SKILLS[@]}" "${DOC_SKILLS[@]}")
+
+echo "Installing ds-skills..."
 echo
 
 # Create skills directory if needed
 mkdir -p "$SKILLS_DIR"
 
 # Symlink each skill directory into ~/.claude/skills/
-for skill in "${SKILL_NAMES[@]}"; do
+for skill in "${ALL_SKILLS[@]}"; do
   TARGET="$SKILLS_DIR/$skill"
   if [ -L "$TARGET" ]; then
     echo "  Updating symlink: $skill"
@@ -38,11 +41,11 @@ done
 
 echo
 echo "Skills installed to $SKILLS_DIR"
-echo "  $(ls "$SKILLS_DIR" | grep "^token-" | wc -l | tr -d ' ') skills available"
+echo "  ${#ALL_SKILLS[@]} skills available"
 
 # Install shared scripts and references to ~/.claude/skills/_shared/
 echo
-echo "Installing shared resources to $SHARED_DIR..."
+echo "Installing shared token resources to $SHARED_DIR..."
 
 mkdir -p "$SHARED_DIR/scripts"
 mkdir -p "$SHARED_DIR/references"
@@ -55,7 +58,12 @@ echo "  $(ls "$SHARED_DIR/references/" | wc -l | tr -d ' ') reference files avai
 echo
 echo "Done. Reload Claude Code to pick up the new skills."
 echo
-echo "Skills available:"
-for skill in "${SKILL_NAMES[@]}"; do
+echo "Token skills:"
+for skill in "${TOKEN_SKILLS[@]}"; do
+  echo "  /$skill"
+done
+echo
+echo "Documentation skills:"
+for skill in "${DOC_SKILLS[@]}"; do
   echo "  /$skill"
 done
