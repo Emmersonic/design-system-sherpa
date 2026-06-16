@@ -1,5 +1,5 @@
 ---
-name: ds-spec-generator
+name: spec-generator
 description: >
   Generate a filled-out design system component or pattern spec from source code, design tokens,
   and industry research. Use this skill whenever a user provides a component implementation

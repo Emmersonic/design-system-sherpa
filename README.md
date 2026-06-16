@@ -27,10 +27,10 @@ A set of Claude skills for building, documenting, and maintaining a design syste
 
 | Skill | What it does |
 |---|---|
-| `ds-spec-generator` | Generates a filled-out component or pattern spec from source code, design tokens, and industry research. Covers anatomy, API, states, accessibility, and token mapping. Output is for engineers. |
-| `ds-doc-generator` | Generates designer-facing usage documentation for a component or pattern. Covers when to use, variants, do/don'ts, content rules, and accessibility framed as layout decisions. Output is for product designers. |
+| `spec-generator` | Generates a filled-out component or pattern spec from source code, design tokens, and industry research. Covers anatomy, API, states, accessibility, and token mapping. Output is for engineers. |
+| `doc-generator` | Generates designer-facing usage documentation for a component or pattern. Covers when to use, variants, do/don'ts, content rules, and accessibility framed as layout decisions. Output is for product designers. |
 
-The two documentation skills are complementary: `ds-spec-generator` answers "how do I build this?", `ds-doc-generator` answers "how do I use this well in my designs?". Run spec first, then pass the spec as input to doc generation.
+The two documentation skills are complementary: `spec-generator` answers "how do I build this?", `doc-generator` answers "how do I use this well in my designs?". Run spec first, then pass the spec as input to doc generation.
 
 ---
 
@@ -121,11 +121,11 @@ Design layers       bound in Figma
 ```
 source code + tokens
         ↓
-ds-spec-generator  →  [component]-spec.md
+spec-generator  →  [component]-spec.md
         ↓
    [engineer review + questions resolved]
         ↓
-ds-doc-generator (with spec as input)  →  [component]-usage.md
+doc-generator (with spec as input)  →  [component]-usage.md
 ```
 
 You can run either skill standalone — the spec isn't required input for the doc generator. But passing the spec gives the doc generator behavioral context without you having to re-explain the component.
@@ -169,8 +169,8 @@ Documentation skills write to:
 
 | File | Written by |
 |---|---|
-| `[component]-spec.md` | `ds-spec-generator` |
-| `[component]-usage.md` | `ds-doc-generator` |
+| `[component]-spec.md` | `spec-generator` |
+| `[component]-usage.md` | `doc-generator` |
 
 Commit token runtime files to your repo alongside your Figma file — they are the source of truth the scripts operate on. Documentation output files belong wherever your team stores design system docs.
 
@@ -536,7 +536,7 @@ Skills are plain directories containing a `SKILL.md`. They live in `~/.claude/sk
 
 The token Python scripts (`scripts/`) run from your project's working directory, so they need to be in your project alongside your token proposal files. They require Python 3.8+ and no third-party dependencies.
 
-The documentation skills (`ds-spec-generator`, `ds-doc-generator`) carry their reference templates inside their own `references/` folder — no extra setup needed.
+The documentation skills (`spec-generator`, `doc-generator`) carry their reference templates inside their own `references/` folder — no extra setup needed.
 
 **Team / shared setup**
 

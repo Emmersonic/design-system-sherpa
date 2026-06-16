@@ -14,7 +14,7 @@ SHARED_DIR="$SKILLS_DIR/_shared"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TOKEN_SKILLS=(token-foundation token-figma-scaffold token-generate token-push token-audit token-migrate token-apply token-bridge token-repair-aliases token-transfer)
-DOC_SKILLS=(ds-doc-generator ds-spec-generator)
+DOC_SKILLS=(doc-generator spec-generator)
 ALL_SKILLS=("${TOKEN_SKILLS[@]}" "${DOC_SKILLS[@]}")
 
 echo "Installing ds-skills..."

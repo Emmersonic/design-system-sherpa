@@ -1,5 +1,5 @@
 ---
-name: ds-doc-generator
+name: doc-generator
 description: >
   Generate designer-facing usage documentation for a design system component or pattern. Use this skill
   whenever a user wants documentation aimed at product designers — not engineers. Triggers include:
