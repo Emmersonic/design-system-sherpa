@@ -227,13 +227,47 @@ Omit sections that genuinely don't apply (note them with a one-line reason).
   two subsections.
 
 **Adapt to environment:**
-- *Output target* — if stories were detected, render `.mdx` (template appendices
-  use `<details>`); otherwise `.md`. Content is identical across targets — the
-  environment changes format, not facts. *(Live story embeds, `<ArgTypes>`, and
-  collapsible-via-`<details>` are layered in by the MDX-render workstream; the
-  model already carries the export list they need.)*
+- *Output target* — if stories were detected, render `.mdx`; otherwise `.md`.
+  The facts are identical across targets — the environment changes format only.
+  See "MDX rendering" below for what `.mdx` adds.
 - *Resolved values* — fill contrast and token cells from Phase 3's resolved
   values, including the specific unresolved markers.
+
+**MDX rendering** (only when `detect_stories.py` reported `detected: true`):
+
+- *Preamble.* Begin the file with the addon-docs imports and a Meta tab:
+  ```mdx
+  import { Meta, Canvas, ArgTypes, Source } from '@storybook/addon-docs/blocks';
+  import * as Stories from './ComponentName.stories';
+
+  <Meta of={Stories} name="Design Spec" />
+  ```
+  `name="Design Spec"` is the convention — it distinguishes this tab from
+  doc-generator's "Usage" tab. The import path is relative to the output file.
+- *Canvas embeds.* After a variant or state section, embed
+  `<Canvas of={Stories.Export} />` when a story export matches. **Matching rule:**
+  lowercase both the section heading and each export name, strip spaces and
+  punctuation, then test for a substring match (e.g. "With toolbar" → `WithToolbar`,
+  "Disabled state" → `Disabled`). Never emit a Canvas for an export not in the
+  detected list. No match → omit it.
+- *Live prop table.* In the API's Consumer props subsection, prefer
+  `<ArgTypes of={Stories.Default} include={[...consumer prop names...]} />` over
+  the hand-authored table — it stays in sync with the component. The `include`
+  filter keeps it to consumer props only; derived/internal and slots keep their
+  hand-authored tables. If argTypes are sparse or absent, emit the hand-authored
+  table plus `{/* TODO: add argTypes for a live prop table */}`.
+- *Usage snippet.* When a `Default` (or primary) export exists, emit
+  `<Source of={Stories.Default} />` in the Imports section as a copy-paste start.
+- *Collapsible appendices.* Wrap each appendix in native
+  `<details><summary><strong>Appendix — …</strong></summary> … </details>` so
+  reference material collapses by default.
+- *Token comparison (optional).* When a component has ≥2 layout modes whose token
+  values meaningfully differ, emit an inline side-by-side JSX block immediately
+  after the table that introduces the modes. All styles use `var(--*)` tokens —
+  never raw hex or px.
+
+Every MDX element must degrade: the same content renders as a plain table or
+appendix heading in `.md` mode. MDX adds scaffolding, never facts.
 
 **Adapt to reader's job:**
 - *What's new* — render the migration-delta block only when lineage exists; omit
