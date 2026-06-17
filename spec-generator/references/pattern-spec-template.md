@@ -6,15 +6,29 @@
 > **Component spec vs. pattern spec**
 > A component spec answers: "How do I build this element correctly?"
 > A pattern spec answers: "How do I compose these elements into a working, correct feature?"
+
+> **How this spec is organized — read in three tiers**
+> The spec is grouped into three tiers, in reading order. A reader rarely needs all three at once.
 >
+> - **Orient** — what problem this solves, when to reach for it, and what it's composed of. The quick read.
+> - **Specify** — the contract: lifecycle, interaction flow, data, validation, errors, async, success, accessibility, content, edge cases. The build reference.
+> - **Verify & relate** — handoff: acceptance checklist, instrumentation, a copy-ready blueprint, and neighboring patterns. The sign-off and reference material.
+>
+> Bulky reference material (the blueprint, exhaustive event tables) belongs in **collapsible appendices** at the end — render as `<details>` in MDX, or a labeled "Appendix" heading in plain markdown. Section numbers are deliberately omitted; sections are referenced by name and omitted entirely when they don't apply.
+
 > **Conformance tiers**
 > - **Level 1 — Core:** Metadata + Overview + Composition + Interaction flow
 > - **Level 2 — Complete:** + States + Validation + Error handling + Accessibility
 > - **Level 3 — Gold:** All sections, including data model, edge cases, content, and instrumentation
 
 ---
+---
 
-## 0. Metadata
+# Tier 1 — Orient
+
+*What problem this pattern solves, when to use it, and what it's composed of. The quick read.*
+
+## Metadata
 
 _DSDS: `metadata` — status, since, lastUpdated, aliases, category, tags, links_
 
@@ -41,7 +55,21 @@ Links:
 
 ---
 
-## 1. Overview
+## What's new
+
+_Conditional — include only when this pattern replaces or extends a predecessor. Omit the heading entirely otherwise._
+
+> **Purpose**
+> When a pattern is an explicit replacement or evolution of an existing one, lead with the delta — what changed, not a rehash of current behavior.
+
+Compared to `[PredecessorPattern]`:
+
+- **[Change].** [One sentence: what changed — composition, flow, data shape, or behavior.]
+- **[Removed/renamed region or step].** [What replaces it.]
+
+---
+
+## Overview
 
 _DSDS: `useCases` — purpose, recommended scenarios, discouraged scenarios with alternatives_
 
@@ -62,7 +90,7 @@ _DSDS: `useCases` — purpose, recommended scenarios, discouraged scenarios with
 
 ---
 
-## 2. Composition
+## Composition
 
 _DSDS: `anatomy` (structural sections) + `links` (component references with `role` and `required` flag)_
 
@@ -83,7 +111,7 @@ _Include a structural anatomy diagram showing all regions at their maximum compo
 
 ---
 
-## 3. Variants
+## Variants
 
 _DSDS: `variants` — sub-types of the pattern, with structural or behavioral differences_
 
@@ -100,8 +128,15 @@ Pattern variants are meaningfully different sub-types — not just visual tweaks
 | `[variant-name]` | How it differs structurally or behaviorally | The specific condition that calls for this sub-type |
 
 ---
+---
 
-## 4. State Lifecycle
+# Tier 2 — Specify
+
+*The contract: lifecycle, interaction flow, data, validation, errors, async, success, accessibility, content, edge cases. The build reference.*
+
+---
+
+## State Lifecycle
 
 _DSDS: `states` — pattern-level conditions, triggers, transitions_
 
@@ -123,7 +158,7 @@ _Include a state machine diagram. Each node is a state; each edge is a transitio
 
 ---
 
-## 5. Interaction Flow
+## Interaction Flow
 
 _DSDS: `interactions` — ordered steps with triggers, component involvement, and examples_
 
@@ -147,7 +182,7 @@ _For patterns with significant branching, use a flowchart diagram rather than a 
 
 ---
 
-## 6. Data Model
+## Data Model
 
 _DSDS: `sections` (free-form) — structured data that the pattern reads, writes, or manages_
 
@@ -173,7 +208,7 @@ Output shape:
 
 ---
 
-## 7. Validation
+## Validation
 
 _DSDS: `guidelines` with `category: "interaction"`, `criteria` array — testable rules with RFC 2119 levels_
 
@@ -194,7 +229,7 @@ _DSDS: `guidelines` with `category: "interaction"`, `criteria` array — testabl
 
 ---
 
-## 8. Error Handling
+## Error Handling
 
 _DSDS: `states` (error conditions) + `guidelines` + `sections`_
 
@@ -217,7 +252,7 @@ Errors at the pattern level are distinct from component-level validation errors.
 
 ---
 
-## 9. Loading & Async States
+## Loading & Async States
 
 _DSDS: `states` + `guidelines` with `category: "interaction"`_
 
@@ -236,7 +271,7 @@ _DSDS: `states` + `guidelines` with `category: "interaction"`_
 
 ---
 
-## 10. Success Behaviour
+## Success Behaviour
 
 _DSDS: `interactions` (final steps) + `guidelines`_
 
@@ -256,7 +291,7 @@ _DSDS: `interactions` (final steps) + `guidelines`_
 
 ---
 
-## 11. Accessibility
+## Accessibility
 
 _DSDS: `accessibility` — pattern-level focus management, live regions, landmark structure, keyboard model_
 
@@ -293,7 +328,7 @@ Pattern-level accessibility is distinct from component-level accessibility. This
 
 ---
 
-## 12. Content
+## Content
 
 _DSDS: `content` — pattern-level labels, copy conventions, localization_
 
@@ -331,7 +366,7 @@ _DSDS: `content` — pattern-level labels, copy conventions, localization_
 
 ---
 
-## 13. Edge Cases
+## Edge Cases
 
 _DSDS: `guidelines` + `sections`_
 
@@ -353,8 +388,38 @@ _DSDS: `guidelines` + `sections`_
 | `[other]` | | |
 
 ---
+---
 
-## 14. Instrumentation
+# Tier 3 — Verify & relate
+
+*Handoff: acceptance checklist, instrumentation, a copy-ready blueprint, and neighboring patterns. Sign-off and reference material.*
+
+---
+
+## Acceptance checklist
+
+_Testable pass/fail criteria for handoff. Derived from this spec's content — not generic boilerplate._
+
+> **Purpose**
+> Usage answers "how do I use this going forward?" This checklist answers "is this pattern spec complete and correct enough to hand off?" Each item is a binary pass/fail criterion derived from the spec: each lifecycle state, interaction branch, validation rule, error path, and focus transition generates a corresponding check. Group by functional area; omit empty groups.
+
+**Flow & lifecycle**
+- [ ] _(every lifecycle state has a defined trigger and user-facing feedback)_
+- [ ] _(every interaction-flow branch reaches a defined success or error terminus)_
+
+**Validation & errors**
+- [ ] _(each validation rule has a defined trigger time and error message)_
+- [ ] _(each error type has a defined recovery action)_
+
+**Accessibility**
+- [ ] _(focus destination defined for each state transition)_
+- [ ] _(landmark and heading structure fits the host page hierarchy)_
+
+_(Add Data, Content, or Other groups as the pattern requires. A criterion that can't be written as binary pass/fail belongs in Validation or Usage, not here.)_
+
+---
+
+## Instrumentation
 
 _DSDS: `sections` (free-form)_
 
@@ -374,7 +439,7 @@ _DSDS: `sections` (free-form)_
 
 ---
 
-## 15. Blueprint
+## Blueprint
 
 _DSDS: `blueprint` — pre-composed, copy-ready code starting point_
 
@@ -400,7 +465,7 @@ A blueprint is a code-level composition of components that implements this patte
 
 ---
 
-## 16. Related Patterns
+## Related Patterns
 
 _DSDS: `links` with kind: `alternative`, `parent`, `child`, `related`_
 
@@ -414,3 +479,9 @@ _DSDS: `links` with kind: `alternative`, `parent`, `child`, `related`_
 | `alternative` | `[PatternName]` | Use `[PatternName]` when ... |
 | `parent` | `[PatternName]` | This pattern is a specialization of `[PatternName]`. |
 | `related` | `[PatternName]` | Often appears in the same product context. |
+
+---
+
+## Appendices
+
+_Collapsible reference material. Render as `<details>` in MDX, or a labeled "Appendix" heading in plain markdown. Include the full blueprint, exhaustive event/instrumentation tables, or any material that would otherwise bloat the linear read. Omit the heading if there are none._

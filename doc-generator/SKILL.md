@@ -55,6 +55,7 @@ Determine:
 - **Known component class?** If the component maps to a well-known class (button, input, modal, tab, etc.), research directly against established design systems rather than inferring from scratch.
 - **What context exists?** Is there a companion spec? A Figma file? Prior docs to improve?
 - **Audience nuance:** Is this for a broad product design team, or a specific product vertical (e.g. mobile-only, data-heavy)? Default to broad unless told otherwise.
+- **Environment.** If a component path is available, detect co-located stories with `${CLAUDE_SKILL_DIR}/../_shared/scripts/detect_stories.py <component-path>`. It returns `{ detected, storiesFile, exports[] }`. When stories exist, the doc renders as `.mdx` with selective live canvases (see Phase 4); otherwise it stays `.md`. Detection is non-blocking — a failure or absence simply means `.md`.
 
 ---
 
@@ -118,6 +119,23 @@ A junior product designer is the minimum bar. If a sentence requires knowing how
 **Length rule:**
 Shorter is better. A designer reading this is looking for a specific answer, not reading a textbook. If a section can be cut without losing guidance a designer would act on, cut it. Prefer one sharp sentence over three cautious ones.
 
+**MDX rendering (only when Phase 1 detection reported `detected: true`):**
+A usage doc is designer prose, not a spec — canvases anchor key decisions, they don't catalog every state. Embed *selectively*.
+
+- *Preamble.* Begin with:
+  ```mdx
+  import { Meta, Canvas } from '@storybook/addon-docs/blocks';
+  import * as Stories from './ComponentName.stories';
+
+  <Meta of={Stories} name="Usage" />
+  ```
+  `name="Usage"` keeps this tab distinct from spec-generator's "Design Spec" tab. The import path is relative to the output file.
+- *Lead canvas.* If a `Default` export exists, embed `<Canvas of={Stories.Default} />` immediately after the opening description paragraph, before the first heading — so designers get visual context without scrolling.
+- *Variant canvases.* After a named variant subsection where a story export matches (lowercase both, strip spaces/punctuation, substring match), embed one canvas.
+- *Never* embed a canvas in when-to-use / don't-use, copy, or accessibility sections — those explain rules, they don't demonstrate a visual state. When in doubt, fewer canvases.
+- *Never* emit a canvas for an export not in the detected list. No match → omit.
+- Output `.mdx` instead of `.md`. The prose content is unchanged — MDX adds the preamble and canvases only.
+
 **States rule:**
 Only document states that require a design decision. Ask: does the designer choose when this state appears, or does it happen automatically? If automatic and invisible to design choices — omit it. Include: disabled, loading, error, empty, inactive. Exclude: hover animation, press feedback, focus ring rendering, transition timing.
 
@@ -156,7 +174,7 @@ After saving the doc, ask any clarifying questions **in chat using the AskUserQu
 
 ## Output
 
-Save the doc to `[component-name]-usage.md` in the working directory (or a path the user specifies), then print the file path.
+Save the doc to `[component-name]-usage.md` — or `[component-name]-usage.mdx` when stories were detected in Phase 1 — in the working directory (or a path the user specifies), then print the file path.
 
 The file contains: completed usage doc only. No questions, no process notes, no TBD placeholders. If a section can't be filled without more information, skip it and ask about it in chat.
 
@@ -167,3 +185,7 @@ The file contains: completed usage doc only. No questions, no process notes, no 
 - `references/component-doc-template.md` — Load before generating component documentation
 - `references/pattern-doc-template.md` — Load before generating pattern documentation
 - `references/doc-research-targets.md` — Load for component-class-specific research URLs and documentation notes
+
+## Scripts
+
+- `${CLAUDE_SKILL_DIR}/../_shared/scripts/detect_stories.py <component-path>` — Phase 1: detect co-located stories and extract named exports, to decide between `.md` and `.mdx` output and which canvases to embed
