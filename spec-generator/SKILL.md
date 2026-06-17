@@ -100,7 +100,7 @@ adaptivity axes and record them as the start of the model.
   UI), skip source extraction and reference the library's own API docs. Focus
   effort on token mapping and team-specific usage rules.
 - **Environment.** Detect co-located stories with
-  `scripts/detect_stories.py <component-path>` — it returns
+  `${CLAUDE_SKILL_DIR}/../_shared/scripts/detect_stories.py <component-path>` — it returns
   `{ detected, storiesFile, exports[] }`, the story export list the render phase
   needs (falls back to `detected: false` when there are none). Also check for a
   token file. Note a predecessor if the user names one or the source hints at one
@@ -168,7 +168,7 @@ gate, not a side effect: the spec must not assert what it hasn't grounded.
    and queue a Phase 7 question.
 
 **Contrast resolution:** for every foreground/background pair, resolve it with
-`scripts/resolve_contrast.py --tokens <file> --pair <fg-token> <bg-token>`. The
+`${CLAUDE_SKILL_DIR}/../_shared/scripts/resolve_contrast.py --tokens <file> --pair <fg-token> <bg-token>`. The
 script walks the `var()` chain (semantic → primitive → value), computes the WCAG
 2.1 ratio, and returns pass/fail at each threshold (AA text, AA large, AA UI,
 AAA). Record the ratio and ✅/❌ from its output. When it returns
@@ -386,7 +386,7 @@ No preamble, no process summary. Spec and questions only.
 
 ## Scripts
 
-- `scripts/detect_stories.py <component-path>` — Frame phase: find co-located
+- `${CLAUDE_SKILL_DIR}/../_shared/scripts/detect_stories.py <component-path>` — Frame phase: find co-located
   stories and extract named exports (the `storybookContext`)
-- `scripts/resolve_contrast.py --tokens <file> --pair <fg> <bg>` — Ground phase:
+- `${CLAUDE_SKILL_DIR}/../_shared/scripts/resolve_contrast.py --tokens <file> --pair <fg> <bg>` — Ground phase:
   resolve a contrast pair's token chain and compute its WCAG ratio
