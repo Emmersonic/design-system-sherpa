@@ -244,9 +244,20 @@ Omit sections that genuinely don't apply (note them with a one-line reason).
 
 **Render composition edges as references:** each composition slot names the child
 and links its spec, or marks `*(stub — spec not yet written)*` — never the
-child's prop table, states, or token chain. The parent documents only coupling
-(what flows in, what fires back, what structural change the child's presence
-causes).
+child's prop table, states, or token chain. The parent documents only the
+**coupling**, along whichever of these dimensions apply:
+- *Downward* — what the parent passes into the slot (layout context, CSS
+  variables, container queries) and the constraints it imposes.
+- *Upward* — events the child fires that the parent responds to, or state the
+  child publishes that drives a structural change in the parent.
+- *Structural* — what changes in the parent when the child is present vs. absent
+  (e.g. "presence activates the surface frame").
+
+The `*(stub — spec not yet written)*` marker is identical everywhere it appears
+so a later audit can grep for undocumented children across all specs. When a
+composition boundary has no existing spec, optionally offer to generate a minimal
+stub spec for the child (`status: stub`, one-line overview, API marked
+`[TBD — spec needed before handoff]`) so the gap doesn't propagate silently.
 
 **Writing mechanics:**
 - Tables for structured data; bullets for prose.
