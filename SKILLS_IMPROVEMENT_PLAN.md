@@ -173,6 +173,30 @@ Build the model spine first; the adaptive renders depend on it.
    output of everything above. Done first, it would need re-tuning after each
    later change.
 
+## Implementation status
+
+All workstreams below are implemented on this branch. Issue numbers map to the
+coverage table above.
+
+- [x] **Foundation** — model-then-render pipeline (Frame · Model · Ground ·
+  Research · Render · Edit · Question) and the three-tier component template.
+- [x] **Grounding + environment detection** — `scripts/resolve_contrast.py`
+  (walks token chains, computes WCAG ratios, names unresolved stops) and
+  `scripts/detect_stories.py` (story export detection), both wired into the
+  pipeline and tested. (#43, #37)
+- [x] **Composition-aware render** — leaf/composite anatomy depth, API split by
+  control surface, child-spec references with coupling dimensions and stub
+  markers. (#40, #42, #45, #46)
+- [x] **MDX render** — `.mdx` with Meta/Canvas/ArgTypes/Source/`<details>` for
+  spec-generator; selective canvases for doc-generator; both degrade to `.md`.
+  (#38, #39, #48)
+- [x] **Reader-job render** — conditional migration delta and derived, grouped
+  acceptance checklist. (#41, #44, #49)
+- [x] **Editorial pass** — dedicated Edit phase: no cross-format restatement,
+  thin-section consolidation, terse prose. (#47, #50, #51)
+- [x] **Parity** — pattern template tiered to match; doc-generator gains
+  environment awareness and MDX output.
+
 ## Judgement calls made (flag if you disagree)
 
 - **Section numbers are demoted to a template detail.** New sections are placed
