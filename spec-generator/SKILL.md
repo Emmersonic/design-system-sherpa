@@ -25,7 +25,7 @@ a structured understanding of the component — then **render** that model into 
 spec, adapting the output to the component, its environment, and its reader.
 
 This two-step shape is what keeps the spec coherent. The model is built in Phases
-1–4; it is rendered and edited in Phases 5–6.
+1–4; it is rendered, edited, and questioned in Phases 5–7.
 
 ### The component model
 
